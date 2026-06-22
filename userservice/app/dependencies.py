@@ -16,6 +16,7 @@ from app.db.session import get_session
 from app.schemas.common import ClientContext
 from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
+from app.services.avatar_service import AvatarService
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -55,6 +56,10 @@ def get_account_service(request: Request) -> AccountService:
     return request.app.state.account_service
 
 
+def get_avatar_service(request: Request) -> AvatarService:
+    return request.app.state.avatar_service
+
+
 async def get_current_user_id(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
@@ -89,4 +94,5 @@ OptionalUserId = Annotated[uuid.UUID | None, Depends(get_optional_user_id)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 AccountServiceDep = Annotated[AccountService, Depends(get_account_service)]
+AvatarServiceDep = Annotated[AvatarService, Depends(get_avatar_service)]
 ClientCtx = Annotated[ClientContext, Depends(get_request_context)]

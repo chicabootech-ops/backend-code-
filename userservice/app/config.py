@@ -51,6 +51,25 @@ class Settings(BaseSettings):
 
     sentry_dsn: str = ""
 
+    # Cloudflare R2
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "chicaboo-assets"
+    r2_endpoint_url: str = ""
+    avatar_max_size_bytes: int = 5 * 1024 * 1024
+    avatar_upload_url_ttl_seconds: int = 900
+    avatar_get_url_ttl_seconds: int = 3600
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def r2_endpoint(self) -> str:
+        if self.r2_endpoint_url:
+            return self.r2_endpoint_url.rstrip("/")
+        if self.r2_account_id:
+            return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+        return ""
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def jwt_private_key_pem(self) -> str:

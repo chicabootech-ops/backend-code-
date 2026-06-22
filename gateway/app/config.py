@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     sentry_dsn: str = ""
 
+    proxy_connect_timeout_seconds: float = 5.0
+    proxy_read_timeout_seconds: float = 30.0
+    proxy_write_timeout_seconds: float = 30.0
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def jwt_public_key_pem(self) -> str:

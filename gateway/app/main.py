@@ -1,25 +1,41 @@
 from contextlib import asynccontextmanager
+import logging
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.core.http_client import close_http_client
+from app.health import aggregate_health
 from app.middleware.auth import AuthMiddleware
 from app.middleware.proxy import proxy_request
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.routing.route_map import build_route_map
+
+logging.basicConfig(level=settings.log_level.upper())
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Gateway started (env=%s)", settings.app_env)
     yield
+    await close_http_client()
+    logger.info("Gateway shutdown complete")
 
 
 app = FastAPI(
     title="Chic A Boo Gateway",
-    description="Single entry point for all external traffic",
-    version="0.1.0",
+    description=(
+        "Single entry point for external traffic. Proxies `/api/user/*` to UserService, "
+        "`/api/*` to commerce backend, `/admin` to admin service."
+    ),
+    version="1.0.0",
     lifespan=lifespan,
+    openapi_tags=[
+        {"name": "gateway", "description": "Health and routing metadata"},
+    ],
 )
 
 app.add_middleware(
@@ -42,9 +58,28 @@ async def attach_request_id(request: Request, call_next):
     return response
 
 
-@app.get("/health")
+@app.get("/health", tags=["gateway"])
 async def health():
     return {"status": "ok", "service": "gateway"}
+
+
+@app.get("/health/upstream", tags=["gateway"])
+async def health_upstream():
+    return await aggregate_health()
+
+
+@app.get("/health/routes", tags=["gateway"])
+async def health_routes():
+    routes = [
+        {
+            "prefix": r.prefix,
+            "service": r.service,
+            "base_url": r.base_url,
+            "description": r.description,
+        }
+        for r in build_route_map()
+    ]
+    return {"routes": routes}
 
 
 @app.api_route(
@@ -53,6 +88,4 @@ async def health():
     include_in_schema=False,
 )
 async def gateway_proxy(request: Request):
-    if request.url.path == "/health":
-        return await health()
     return await proxy_request(request)
