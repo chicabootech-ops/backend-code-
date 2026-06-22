@@ -20,6 +20,9 @@ htmlcov/
 .env
 .env.local
 
+# Local dev secrets (JWT keys)
+keys/
+
 # IDE
 .idea/
 .vscode/

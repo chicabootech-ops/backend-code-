@@ -1,28 +1,134 @@
 services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chicaboo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chicaboo}
+      POSTGRES_DB: ${POSTGRES_DB:-chicaboo}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chicaboo} -d ${POSTGRES_DB:-chicaboo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: python:3.12-slim
+    working_dir: /database
+    volumes:
+      - ./database:/database
+    env_file:
+      - ./database/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-chicaboo}:${POSTGRES_PASSWORD:-chicaboo}@postgres:5432/${POSTGRES_DB:-chicaboo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "pip install -q -r requirements.txt && python migrate.py migrate"
+
   gateway:
-    build: ./gateway
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
     ports:
       - "8000:8000"
-    env_file: ./gateway/.env.example
+    env_file: ./gateway/.env
+    environment:
+      USER_SERVICE_URL: http://userservice:4001
+      BACKEND_URL: http://backend:4002
+      ADMIN_URL: http://admin:4003
+      REDIS_URL: redis://redis:6379
+      JWT_PUBLIC_KEY_PATH: /app/keys/jwt_public.pem
+    volumes:
+      - ./keys:/app/keys:ro
+      - ./shared:/app/shared:ro
     depends_on:
-      - userservice
-      - backend
-      - admin
+      redis:
+        condition: service_healthy
+      userservice:
+        condition: service_started
+      backend:
+        condition: service_started
+      admin:
+        condition: service_started
 
   userservice:
-    build: ./userservice
+    build:
+      context: .
+      dockerfile: userservice/Dockerfile
     ports:
       - "4001:4001"
-    env_file: ./userservice/.env.example
+    env_file: ./userservice/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-chicaboo}:${POSTGRES_PASSWORD:-chicaboo}@postgres:5432/${POSTGRES_DB:-chicaboo}
+      REDIS_URL: redis://redis:6379
+      JWT_PRIVATE_KEY_PATH: /app/keys/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /app/keys/jwt_public.pem
+    volumes:
+      - ./keys:/app/keys:ro
+      - ./shared:/app/shared:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "4002:4002"
-    env_file: ./backend/.env.example
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-chicaboo}:${POSTGRES_PASSWORD:-chicaboo}@postgres:5432/${POSTGRES_DB:-chicaboo}
+      REDIS_URL: redis://redis:6379
+      USER_SERVICE_URL: http://userservice:4001
+    volumes:
+      - ./shared:/app/shared:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   admin:
-    build: ./admin
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
     ports:
       - "4003:4003"
-    env_file: ./admin/.env.example
+    env_file: ./admin/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-chicaboo}:${POSTGRES_PASSWORD:-chicaboo}@postgres:5432/${POSTGRES_DB:-chicaboo}
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./shared:/app/shared:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
