@@ -3,20 +3,20 @@
 -- Services bypass RLS using a privileged DB role (e.g. chicaboo_service).
 -- Customer-scoped queries set: SET LOCAL app.current_user_id = '<uuid>';
 
-ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE identity.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_addresses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_preferences ENABLE ROW LEVEL SECURITY;
 
--- auth.users — users may only access their own non-deleted row
-CREATE POLICY users_select_own ON auth.users
+-- identity.users — users may only access their own non-deleted row
+CREATE POLICY users_select_own ON identity.users
     FOR SELECT
     USING (
         id = public.current_user_id()
         AND deleted_at IS NULL
     );
 
-CREATE POLICY users_update_own ON auth.users
+CREATE POLICY users_update_own ON identity.users
     FOR UPDATE
     USING (id = public.current_user_id())
     WITH CHECK (id = public.current_user_id());

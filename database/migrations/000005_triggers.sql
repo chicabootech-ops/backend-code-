@@ -21,9 +21,9 @@ AS $$
     SELECT NULLIF(current_setting('app.current_user_id', true), '')::uuid;
 $$;
 
--- auth.users
+-- identity.users
 CREATE TRIGGER users_set_updated_at
-    BEFORE UPDATE ON auth.users
+    BEFORE UPDATE ON identity.users
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 

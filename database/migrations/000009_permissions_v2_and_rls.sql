@@ -76,22 +76,22 @@ ON CONFLICT DO NOTHING;
 -- ---------------------------------------------------------------------------
 -- RLS — new customer-facing tables
 -- ---------------------------------------------------------------------------
-ALTER TABLE auth.user_devices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE identity.user_devices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payment_customers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE auth.login_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE identity.login_history ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY user_devices_select_own ON auth.user_devices
+CREATE POLICY user_devices_select_own ON identity.user_devices
     FOR SELECT
     USING (
         user_id = public.current_user_id()
         AND revoked_at IS NULL
     );
 
-CREATE POLICY user_devices_insert_own ON auth.user_devices
+CREATE POLICY user_devices_insert_own ON identity.user_devices
     FOR INSERT
     WITH CHECK (user_id = public.current_user_id());
 
-CREATE POLICY user_devices_update_own ON auth.user_devices
+CREATE POLICY user_devices_update_own ON identity.user_devices
     FOR UPDATE
     USING (user_id = public.current_user_id())
     WITH CHECK (user_id = public.current_user_id());
@@ -103,7 +103,7 @@ CREATE POLICY payment_customers_select_own ON public.payment_customers
         AND deleted_at IS NULL
     );
 
-CREATE POLICY login_history_select_own ON auth.login_history
+CREATE POLICY login_history_select_own ON identity.login_history
     FOR SELECT
     USING (user_id = public.current_user_id());
 

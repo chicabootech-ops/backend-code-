@@ -1,9 +1,9 @@
 -- Chic A Boo — auth schema
 
 -- ---------------------------------------------------------------------------
--- auth.users
+-- identity.users
 -- ---------------------------------------------------------------------------
-CREATE TABLE auth.users (
+CREATE TABLE identity.users (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email           TEXT NOT NULL,
     phone           TEXT,
@@ -21,36 +21,36 @@ CREATE TABLE auth.users (
 );
 
 CREATE UNIQUE INDEX users_email_unique_active
-    ON auth.users (email)
+    ON identity.users (email)
     WHERE deleted_at IS NULL;
 
 CREATE UNIQUE INDEX users_phone_unique_active
-    ON auth.users (phone)
+    ON identity.users (phone)
     WHERE deleted_at IS NULL AND phone IS NOT NULL;
 
-CREATE INDEX users_status_idx ON auth.users (status);
-CREATE INDEX users_created_at_idx ON auth.users (created_at);
+CREATE INDEX users_status_idx ON identity.users (status);
+CREATE INDEX users_created_at_idx ON identity.users (created_at);
 
 -- ---------------------------------------------------------------------------
--- auth.refresh_tokens
+-- identity.refresh_tokens
 -- ---------------------------------------------------------------------------
-CREATE TABLE auth.refresh_tokens (
+CREATE TABLE identity.refresh_tokens (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+    user_id     UUID NOT NULL REFERENCES identity.users (id) ON DELETE CASCADE,
     token_jti   TEXT NOT NULL,
     expires_at  TIMESTAMPTZ NOT NULL,
     revoked     BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX refresh_tokens_token_jti_unique ON auth.refresh_tokens (token_jti);
-CREATE INDEX refresh_tokens_user_id_idx ON auth.refresh_tokens (user_id);
-CREATE INDEX refresh_tokens_expires_at_idx ON auth.refresh_tokens (expires_at);
+CREATE UNIQUE INDEX refresh_tokens_token_jti_unique ON identity.refresh_tokens (token_jti);
+CREATE INDEX refresh_tokens_user_id_idx ON identity.refresh_tokens (user_id);
+CREATE INDEX refresh_tokens_expires_at_idx ON identity.refresh_tokens (expires_at);
 
 -- ---------------------------------------------------------------------------
--- auth.email_otps
+-- identity.email_otps
 -- ---------------------------------------------------------------------------
-CREATE TABLE auth.email_otps (
+CREATE TABLE identity.email_otps (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email       TEXT NOT NULL,
     otp_hash    TEXT NOT NULL,
@@ -60,30 +60,30 @@ CREATE TABLE auth.email_otps (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX email_otps_email_idx ON auth.email_otps (email);
-CREATE INDEX email_otps_expires_at_idx ON auth.email_otps (expires_at);
+CREATE INDEX email_otps_email_idx ON identity.email_otps (email);
+CREATE INDEX email_otps_expires_at_idx ON identity.email_otps (expires_at);
 
 -- ---------------------------------------------------------------------------
--- auth.password_resets
+-- identity.password_resets
 -- ---------------------------------------------------------------------------
-CREATE TABLE auth.password_resets (
+CREATE TABLE identity.password_resets (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+    user_id     UUID NOT NULL REFERENCES identity.users (id) ON DELETE CASCADE,
     token_hash  TEXT NOT NULL,
     expires_at  TIMESTAMPTZ NOT NULL,
     used        BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX password_resets_token_hash_unique ON auth.password_resets (token_hash);
-CREATE INDEX password_resets_user_id_idx ON auth.password_resets (user_id);
+CREATE UNIQUE INDEX password_resets_token_hash_unique ON identity.password_resets (token_hash);
+CREATE INDEX password_resets_user_id_idx ON identity.password_resets (user_id);
 
 -- ---------------------------------------------------------------------------
--- auth.security_logs
+-- identity.security_logs
 -- ---------------------------------------------------------------------------
-CREATE TABLE auth.security_logs (
+CREATE TABLE identity.security_logs (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID REFERENCES auth.users (id) ON DELETE SET NULL,
+    user_id     UUID REFERENCES identity.users (id) ON DELETE SET NULL,
     event_type  TEXT NOT NULL,
     ip_address  TEXT,
     user_agent  TEXT,
@@ -91,6 +91,6 @@ CREATE TABLE auth.security_logs (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX security_logs_user_id_idx ON auth.security_logs (user_id);
-CREATE INDEX security_logs_event_type_idx ON auth.security_logs (event_type);
-CREATE INDEX security_logs_created_at_idx ON auth.security_logs (created_at);
+CREATE INDEX security_logs_user_id_idx ON identity.security_logs (user_id);
+CREATE INDEX security_logs_event_type_idx ON identity.security_logs (event_type);
+CREATE INDEX security_logs_created_at_idx ON identity.security_logs (created_at);

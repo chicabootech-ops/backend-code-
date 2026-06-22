@@ -5,7 +5,7 @@
 -- ---------------------------------------------------------------------------
 CREATE TABLE public.user_profiles (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+    user_id         UUID NOT NULL REFERENCES identity.users (id) ON DELETE CASCADE,
     first_name      TEXT,
     last_name       TEXT,
     gender          TEXT,
@@ -31,7 +31,7 @@ CREATE INDEX user_profiles_last_name_idx ON public.user_profiles (last_name);
 -- ---------------------------------------------------------------------------
 CREATE TABLE public.user_addresses (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+    user_id     UUID NOT NULL REFERENCES identity.users (id) ON DELETE CASCADE,
     label       TEXT,
     full_name   TEXT NOT NULL,
     phone       TEXT,
@@ -57,7 +57,7 @@ CREATE INDEX user_addresses_postal_code_idx ON public.user_addresses (postal_cod
 -- ---------------------------------------------------------------------------
 CREATE TABLE public.user_preferences (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id             UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+    user_id             UUID NOT NULL REFERENCES identity.users (id) ON DELETE CASCADE,
     email_marketing     BOOLEAN NOT NULL DEFAULT FALSE,
     sms_marketing       BOOLEAN NOT NULL DEFAULT FALSE,
     preferred_language  TEXT NOT NULL DEFAULT 'en',
