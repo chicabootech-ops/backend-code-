@@ -246,9 +246,9 @@ class AccountService:
         consent_repo = ConsentRepository(session)
 
         marketing_fields = {
-            "email_marketing": "email_marketing",
-            "sms_marketing": "sms_marketing",
-            "analytics_tracking": "analytics_tracking",
+            "email_marketing": "marketing_email",
+            "sms_marketing": "marketing_sms",
+            "analytics_tracking": "analytics",
         }
         for field, consent_type in marketing_fields.items():
             if field in updates:
@@ -256,7 +256,7 @@ class AccountService:
                     user_id=user_id,
                     consent_type=consent_type,
                     granted=updates[field],
-                    source="preferences_api",
+                    source="preferences",
                     ip_address=ctx.ip_address,
                     user_agent=ctx.user_agent,
                 )
