@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_from: str = "noreply@chicaboo.com"
     smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_secure: bool = False
     smtp_user: str = ""
     smtp_pass: str = ""
 

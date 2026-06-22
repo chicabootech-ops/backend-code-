@@ -100,6 +100,7 @@ class AuthService:
                 user_agent=ctx.user_agent,
             )
 
+        # Registration rolls back if OTP email cannot be delivered.
         await self._issue_email_otp(session, email=body.email, purpose="registration")
 
         security = SecurityLogRepository(session)
@@ -111,7 +112,9 @@ class AuthService:
             metadata={"email": email_norm},
         )
 
-        return MessageResponse(message="Registration successful. Please verify your email.")
+        return MessageResponse(
+            message="Registration successful. Check your email for the verification code."
+        )
 
     async def verify_email(
         self,
