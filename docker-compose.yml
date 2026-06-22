@@ -1,0 +1,28 @@
+services:
+  gateway:
+    build: ./gateway
+    ports:
+      - "8000:8000"
+    env_file: ./gateway/.env.example
+    depends_on:
+      - userservice
+      - backend
+      - admin
+
+  userservice:
+    build: ./userservice
+    ports:
+      - "4001:4001"
+    env_file: ./userservice/.env.example
+
+  backend:
+    build: ./backend
+    ports:
+      - "4002:4002"
+    env_file: ./backend/.env.example
+
+  admin:
+    build: ./admin
+    ports:
+      - "4003:4003"
+    env_file: ./admin/.env.example
