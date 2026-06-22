@@ -9,6 +9,7 @@ from app.config import settings
 from app.core.http_client import close_http_client
 from app.health import aggregate_health
 from app.middleware.auth import AuthMiddleware
+from app.middleware.logging import LoggingMiddleware
 from app.middleware.proxy import proxy_request
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.routing.route_map import build_route_map
@@ -45,6 +46,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(LoggingMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthMiddleware)
 
