@@ -36,8 +36,19 @@ class Settings(BaseSettings):
 
     jwt_access_ttl_seconds: int = 900
     jwt_refresh_ttl_seconds: int = 604800
+    otp_ttl_seconds: int = 600
+    password_reset_ttl_seconds: int = 3600
+
     max_failed_login_attempts: int = 5
     account_lockout_minutes: int = 30
+
+    rate_limit_login: int = 10
+    rate_limit_register: int = 5
+    rate_limit_verify_email: int = 10
+    rate_limit_forgot_password: int = 5
+    rate_limit_reset_password: int = 10
+    rate_limit_refresh: int = 30
+
     sentry_dsn: str = ""
 
     @computed_field  # type: ignore[prop-decorator]

@@ -1,35 +1,37 @@
+from __future__ import annotations
+
 from fastapi import APIRouter
+
+from app.dependencies import AccountServiceDep, CurrentUserId, DbSession
+from app.schemas.onboarding import OnboardingResponse
+from app.schemas.user import CurrentUserResponse, ProfileUpdateRequest
 
 router = APIRouter(prefix="/api/user", tags=["user"])
 
 
-@router.get("/me")
-async def get_me():
-    """Return current user profile."""
-    return {"message": "not implemented"}
+@router.get("/me", response_model=CurrentUserResponse)
+async def get_me(
+    session: DbSession,
+    account: AccountServiceDep,
+    user_id: CurrentUserId,
+) -> CurrentUserResponse:
+    return await account.get_me(session, user_id)
 
 
-@router.patch("/me")
-async def update_me():
-    """Update name, phone, avatar."""
-    return {"message": "not implemented"}
+@router.patch("/me", response_model=CurrentUserResponse)
+async def patch_me(
+    session: DbSession,
+    account: AccountServiceDep,
+    user_id: CurrentUserId,
+    body: ProfileUpdateRequest,
+) -> CurrentUserResponse:
+    return await account.update_me(session, user_id, body)
 
 
-@router.get("/addresses")
-async def list_addresses():
-    return {"message": "not implemented"}
-
-
-@router.post("/addresses")
-async def create_address():
-    return {"message": "not implemented"}
-
-
-@router.patch("/addresses/{address_id}")
-async def update_address(address_id: str):
-    return {"message": "not implemented"}
-
-
-@router.delete("/addresses/{address_id}")
-async def delete_address(address_id: str):
-    return {"message": "not implemented"}
+@router.get("/me/onboarding", response_model=OnboardingResponse)
+async def get_onboarding(
+    session: DbSession,
+    account: AccountServiceDep,
+    user_id: CurrentUserId,
+) -> OnboardingResponse:
+    return await account.get_onboarding(session, user_id)
