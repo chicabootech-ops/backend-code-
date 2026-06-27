@@ -21,8 +21,24 @@ class Settings(BaseSettings):
 
     admin_jwt_secret: str = ""
     admin_jwt_ttl_seconds: int = 28800
-    admin_mfa_issuer: str = "ChicABoo Admin"
+    admin_mfa_issuer: str = "Chic A Boo Admin"
     sentry_dsn: str = ""
+
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = ""
+    r2_endpoint_url: str = ""
+    avatar_get_url_ttl_seconds: int = 3600
+
+    @property
+    def r2_configured(self) -> bool:
+        return bool(
+            self.r2_access_key_id
+            and self.r2_secret_access_key
+            and self.r2_bucket_name
+            and self.r2_endpoint_url
+        )
 
 
 settings = Settings()

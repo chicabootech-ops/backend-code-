@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://chicaboo:chicaboo@localhost:5433/chicaboo"
     redis_url: str = "redis://localhost:6379"
 
+    @property
+    def database_dsn(self) -> str:
+        return self.database_url.split("?", 1)[0]
+
     r2_bucket: str = "chicaboo-assets"
     r2_account_id: str = ""
     r2_access_key: str = ""

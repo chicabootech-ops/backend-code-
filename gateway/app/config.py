@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:4002"
     admin_url: str = "http://localhost:4003"
     redis_url: str = "redis://localhost:6379"
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = "http://localhost:3000,http://localhost:3001"
     sentry_dsn: str = ""
 
     proxy_connect_timeout_seconds: float = 5.0

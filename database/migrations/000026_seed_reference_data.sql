@@ -117,35 +117,10 @@ WHERE NOT EXISTS (
 
 
 -- =============================================================================
--- SEED: root categories (triggers 000024 search_vector via name update)
+-- SEED: root categories
+-- Gifting catalog categories are seeded in 000027_chicaboo_catalog_seed.sql
+-- (Do NOT add clothing/fashion placeholders here.)
 -- =============================================================================
-INSERT INTO commerce.categories (name, slug, parent_id, sort_order)
-SELECT 'Women', 'women', NULL, 0
-WHERE NOT EXISTS (
-  SELECT 1 FROM commerce.categories
-  WHERE slug = 'women' AND parent_id IS NULL AND deleted_at IS NULL
-);
-
-INSERT INTO commerce.categories (name, slug, parent_id, sort_order)
-SELECT 'Men', 'men', NULL, 1
-WHERE NOT EXISTS (
-  SELECT 1 FROM commerce.categories
-  WHERE slug = 'men' AND parent_id IS NULL AND deleted_at IS NULL
-);
-
-INSERT INTO commerce.categories (name, slug, parent_id, sort_order)
-SELECT 'Kids', 'kids', NULL, 2
-WHERE NOT EXISTS (
-  SELECT 1 FROM commerce.categories
-  WHERE slug = 'kids' AND parent_id IS NULL AND deleted_at IS NULL
-);
-
-INSERT INTO commerce.categories (name, slug, parent_id, sort_order)
-SELECT 'Accessories', 'accessories', NULL, 3
-WHERE NOT EXISTS (
-  SELECT 1 FROM commerce.categories
-  WHERE slug = 'accessories' AND parent_id IS NULL AND deleted_at IS NULL
-);
 
 
 -- =============================================================================
