@@ -6,6 +6,7 @@ from botocore.exceptions import ClientError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.category import Category
 from app.repositories.category_repository import CategoryRepository
 from app.schemas.category import (
     StorefrontCategoryDetailOut,
@@ -14,14 +15,20 @@ from app.schemas.category import (
     StorefrontCategoryParentOut,
 )
 
-DEFAULT_COLLECTION_IMAGE = "/collections/premium-blooms.jpg"
+DEFAULT_COLLECTION_IMAGE = "/collections/tulips.jpeg"
+LEGACY_PLACEHOLDER_IMAGE = "/collections/premium-blooms.jpg"
 
 
 def _image_url(image_r2_key: str | None) -> str | None:
     if not image_r2_key:
         return None
+    key = image_r2_key.strip()
+    if not key:
+        return None
+    if key.startswith("/"):
+        return key
     if settings.r2_public_base_url:
-        return f"{settings.r2_public_base_url.rstrip('/')}/{image_r2_key.lstrip('/')}"
+        return f"{settings.r2_public_base_url.rstrip('/')}/{key.lstrip('/')}"
     if not (
         settings.r2_endpoint_url
         and settings.r2_access_key
@@ -48,12 +55,15 @@ def _image_url(image_r2_key: str | None) -> str | None:
 
 
 def _to_out(category: Category) -> StorefrontCategoryOut:
+    resolved = _image_url(category.image_r2_key)
+    if resolved == LEGACY_PLACEHOLDER_IMAGE:
+        resolved = None
     return StorefrontCategoryOut(
         id=category.id,
         name=category.name,
         slug=category.slug,
         description=category.description,
-        image_url=_image_url(category.image_r2_key) or DEFAULT_COLLECTION_IMAGE,
+        image_url=resolved,
         sort_order=category.sort_order,
     )
 
