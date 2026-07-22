@@ -83,15 +83,27 @@ class PhoneService:
         if user.phone != e164_like and user.phone != national:
             user.phone = e164_like
             user.phone_verified = False
-            user.updated_at = datetime.now(UTC)
+            user.updated_at = datetime.now(UTC).replace(tzinfo=None)
             await session.flush()
 
-        result = await self._sms.send_otp(mobile_number=national)
+        try:
+            result = await self._sms.send_otp(mobile_number=national)
+        except AppError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Unexpected SMS send failure")
+            raise AppError(
+                "Failed to send SMS OTP. Please try again.",
+                code="sms_send_failed",
+                status_code=503,
+            ) from exc
+
         # Store verification id for validate step
         key = f"phone_verify:{user_id}"
+        ttl = max(30, int(result.timeout_seconds or self._settings.otp_ttl_seconds))
         await self._redis.raw.setex(
             key,
-            result.timeout_seconds or self._settings.otp_ttl_seconds,
+            ttl,
             f"{result.verification_id}|{national}",
         )
 
@@ -140,7 +152,7 @@ class PhoneService:
 
         user.phone = f"+{self._settings.message_central_country_code}{national}"
         user.phone_verified = True
-        user.updated_at = datetime.now(UTC)
+        user.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await session.flush()
         await self._redis.raw.delete(f"phone_verify:{user_id}")
 
