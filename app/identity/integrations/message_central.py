@@ -112,32 +112,45 @@ class MessageCentralClient:
                     headers={"authToken": token, "accept": "*/*"},
                 )
             data = response.json() if response.content else {}
-            nested = data.get("data") if isinstance(data.get("data"), dict) else data
+            nested = data.get("data") if isinstance(data.get("data"), dict) else (
+                data if isinstance(data, dict) else {}
+            )
             verification_id = str(
                 nested.get("verificationId")
                 or nested.get("verification_id")
                 or data.get("verificationId")
                 or ""
             )
-            if response.status_code >= 400 or not verification_id:
-                logger.error(
-                    "MessageCentral send failed status=%s body=%s",
-                    response.status_code,
-                    data or response.text[:400],
+            message = str(data.get("message") or nested.get("message") or "")
+            # Active OTP already exists — reuse verificationId if present
+            already = "ALREADY" in message.upper() or "REQUEST_ALREADY_EXISTS" in message.upper()
+            if verification_id and (response.status_code < 400 or already):
+                timeout_raw = (
+                    nested.get("timeout")
+                    or nested.get("timeoutInSec")
+                    or self._settings.otp_ttl_seconds
                 )
-                raise AppError(
-                    (data.get("message") if isinstance(data, dict) else None)
-                    or "Failed to send SMS OTP. Please try again.",
-                    code="sms_send_failed",
-                    status_code=503,
+                try:
+                    timeout = int(timeout_raw)
+                except (TypeError, ValueError):
+                    timeout = self._settings.otp_ttl_seconds
+                return SendOtpResult(
+                    verification_id=verification_id,
+                    timeout_seconds=timeout,
+                    raw=data if isinstance(data, dict) else {"raw": data},
                 )
 
-        timeout = int(
-            nested.get("timeout")
-            or nested.get("timeoutInSec")
-            or self._settings.otp_ttl_seconds
-        )
-        return SendOtpResult(verification_id=verification_id, timeout_seconds=timeout, raw=data)
+            logger.error(
+                "MessageCentral send failed status=%s body=%s",
+                response.status_code,
+                data or response.text[:400],
+            )
+            raise AppError(
+                message or "Failed to send SMS OTP. Please try again.",
+                code="sms_send_failed",
+                status_code=503,
+            )
+
 
     async def validate_otp(self, *, verification_id: str, code: str) -> bool:
         token = await self._get_auth_token()
