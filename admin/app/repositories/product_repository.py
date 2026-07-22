@@ -71,6 +71,23 @@ class ProductRepository:
         await self._session.refresh(variant)
         return variant
 
+    async def update_variant(self, variant_id: uuid.UUID, data: dict[str, Any]) -> ProductVariant | None:
+        result = await self._session.execute(
+            select(ProductVariant).where(
+                ProductVariant.id == variant_id,
+                ProductVariant.deleted_at.is_(None),
+            )
+        )
+        variant = result.scalar_one_or_none()
+        if not variant:
+            return None
+        for key, value in data.items():
+            if value is not None or key in {"compare_at_price_paise", "option_values"}:
+                setattr(variant, key, value)
+        await self._session.flush()
+        await self._session.refresh(variant)
+        return variant
+
     async def update_product(self, product_id: uuid.UUID, data: dict[str, Any]) -> Product | None:
         product = await self.get_by_id(product_id)
         if not product:

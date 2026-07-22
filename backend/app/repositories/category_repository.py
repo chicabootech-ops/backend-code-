@@ -19,6 +19,7 @@ class CategoryRepository:
                 Category.deleted_at.is_(None),
                 Category.status == "active",
                 Category.parent_id.is_(None),
+                Category.kind == "section",
             )
             .order_by(Category.sort_order, Category.name)
         )

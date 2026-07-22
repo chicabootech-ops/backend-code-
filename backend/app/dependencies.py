@@ -7,6 +7,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
+from app.services.catalog_service import CatalogService
 from app.services.category_service import CategoryService
 
 
@@ -22,4 +23,11 @@ async def get_category_service(
     return CategoryService(db)
 
 
+async def get_catalog_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CatalogService:
+    return CatalogService(db)
+
+
 CategoryServiceDep = Annotated[CategoryService, Depends(get_category_service)]
+CatalogServiceDep = Annotated[CatalogService, Depends(get_catalog_service)]

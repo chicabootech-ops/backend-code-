@@ -22,6 +22,12 @@ class ProductService:
         self._audit = AuditRepository(session)
 
     def _to_out(self, product: Product, variants=None) -> ProductOut:
+        meta = product.metadata_ or {}
+        image_url = meta.get("image_url") or meta.get("image_r2_key")
+        if isinstance(image_url, str):
+            image_url = image_url.strip() or None
+        else:
+            image_url = None
         return ProductOut(
             id=product.id,
             name=product.name,
@@ -32,7 +38,8 @@ class ProductService:
             brand=product.brand,
             status=product.status,
             is_featured=product.is_featured,
-            metadata=product.metadata_ or {},
+            image_url=image_url,
+            metadata=meta,
             variants=[
                 ProductVariantOut(
                     id=v.id,
@@ -82,10 +89,19 @@ class ProductService:
         category = await self._categories.get_by_id(payload.primary_category_id)
         if not category:
             raise ValidationError("Category not found")
+        cat_kind = getattr(category, "kind", None) or (
+            "section" if category.parent_id is None else "category"
+        )
+        if cat_kind != "category" or category.parent_id is None:
+            raise ValidationError("Products must belong to a category under a section")
 
         slug = slugify(payload.slug or payload.name)
         if await self._repo.slug_exists(slug):
             raise ConflictError(f"Slug '{slug}' already exists")
+
+        metadata = dict(payload.metadata or {})
+        if payload.image_url is not None:
+            metadata["image_url"] = payload.image_url.strip() or None
 
         product = await self._repo.create_product(
             {
@@ -97,7 +113,7 @@ class ProductService:
                 "brand": payload.brand,
                 "status": payload.status,
                 "is_featured": payload.is_featured,
-                "metadata_": payload.metadata,
+                "metadata_": metadata,
             }
         )
 
@@ -161,6 +177,11 @@ class ProductService:
             category = await self._categories.get_by_id(payload.primary_category_id)
             if not category:
                 raise ValidationError("Category not found")
+            cat_kind = getattr(category, "kind", None) or (
+                "section" if category.parent_id is None else "category"
+            )
+            if cat_kind != "category" or category.parent_id is None:
+                raise ValidationError("Products must belong to a category under a section")
             data["primary_category_id"] = payload.primary_category_id
         if payload.description is not None:
             data["description"] = payload.description
@@ -172,12 +193,41 @@ class ProductService:
             data["status"] = payload.status
         if payload.is_featured is not None:
             data["is_featured"] = payload.is_featured
-        if payload.metadata is not None:
-            data["metadata"] = payload.metadata
+        if payload.metadata is not None or payload.image_url is not None:
+            meta = dict(payload.metadata if payload.metadata is not None else (product.metadata_ or {}))
+            if payload.image_url is not None:
+                meta["image_url"] = payload.image_url.strip() or None
+            data["metadata"] = meta
 
         updated = await self._repo.update_product(product_id, data)
         if not updated:
             raise NotFoundError("Product not found")
+
+        if payload.variant is not None:
+            variants = await self._repo.get_variants(product_id)
+            if variants:
+                await self._repo.update_variant(
+                    variants[0].id,
+                    {
+                        "title": payload.variant.title,
+                        "price_paise": payload.variant.price_paise,
+                        "compare_at_price_paise": payload.variant.compare_at_price_paise,
+                        "status": payload.variant.status,
+                        "option_values": payload.variant.option_values,
+                    },
+                )
+            else:
+                await self._repo.create_variant(
+                    {
+                        "product_id": product_id,
+                        "sku": payload.variant.sku or f"{updated.slug}-default",
+                        "title": payload.variant.title,
+                        "option_values": payload.variant.option_values,
+                        "price_paise": payload.variant.price_paise,
+                        "compare_at_price_paise": payload.variant.compare_at_price_paise,
+                        "status": payload.variant.status,
+                    }
+                )
 
         await self._audit.log(
             admin_id=admin_id,

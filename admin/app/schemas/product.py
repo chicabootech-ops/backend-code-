@@ -25,6 +25,7 @@ class ProductCreate(BaseModel):
     brand: str | None = None
     status: str = "draft"
     is_featured: bool = False
+    image_url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     variant: ProductVariantIn | None = None
 
@@ -38,7 +39,9 @@ class ProductUpdate(BaseModel):
     brand: str | None = None
     status: str | None = None
     is_featured: bool | None = None
+    image_url: str | None = None
     metadata: dict[str, Any] | None = None
+    variant: ProductVariantIn | None = None
 
 
 class ProductVariantOut(BaseModel):
@@ -61,6 +64,7 @@ class ProductOut(BaseModel):
     brand: str | None = None
     status: str
     is_featured: bool
+    image_url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     variants: list[ProductVariantOut] = Field(default_factory=list)
     created_at: datetime

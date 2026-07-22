@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.db.session import create_engine, create_session_factory
-from app.routers import cart, categories, orders, payments, products
+from app.routers import cart, categories, orders, payments, products, sections
 
 
 @asynccontextmanager
@@ -26,6 +26,7 @@ app = FastAPI(
 
 app.include_router(products.router)
 app.include_router(categories.router)
+app.include_router(sections.router)
 app.include_router(cart.router)
 app.include_router(orders.router)
 app.include_router(payments.router)
