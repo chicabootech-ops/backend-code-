@@ -8,14 +8,20 @@ from pathlib import Path
 def load_pem(inline_value: str, file_path: str) -> str:
     """Return inline PEM content or read from file_path if set.
 
-    Render/env UIs often store multiline PEMs with literal ``\\n`` escapes —
-    normalize those so RS256 signing works at login time.
+    Render/env UIs often store multiline PEMs with literal ``\\n`` escapes,
+    surrounding quotes, or CRLF — normalize those for RS256.
     """
     if inline_value and inline_value.strip():
         value = inline_value.strip()
-        if "\\n" in value and "\n" not in value:
-            value = value.replace("\\n", "\n")
-        return value
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1].strip()
+        # Always unescape literal \n / \r\n sequences from env UIs
+        if "\\n" in value:
+            value = value.replace("\\r\\n", "\n").replace("\\n", "\n")
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
+        return value.strip()
     if not file_path:
         return ""
     path = Path(file_path)
