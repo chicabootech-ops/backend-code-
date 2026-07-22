@@ -178,3 +178,32 @@ app.include_router(coupons.router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "chicaboo-api"}
+
+
+@app.get("/health/ready")
+async def health_ready(request: Request):
+    """Liveness + JWT/Redis readiness (no secrets returned)."""
+    checks: dict[str, str] = {}
+    ok = True
+
+    # JWT can sign
+    try:
+        jwt_mgr = request.app.state.user_jwt_manager
+        token, _, _ = jwt_mgr.create_access_token("00000000-0000-0000-0000-000000000000")
+        checks["jwt"] = "ok" if token else "empty"
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        checks["jwt"] = f"error:{type(exc).__name__}"
+
+    # Redis reachable
+    try:
+        await request.app.state.redis_client.ping()
+        checks["redis"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        checks["redis"] = f"error:{type(exc).__name__}"
+
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "ok" if ok else "degraded", "checks": checks},
+    )
