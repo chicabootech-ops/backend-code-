@@ -11,7 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shared ./shared
 COPY app ./app
-COPY keys ./keys
+# JWT PEMs are not in git (keys/ is gitignored).
+# On Render set JWT_PRIVATE_KEY + JWT_PUBLIC_KEY (full PEM text).
+# Locally you can still mount ./keys or set JWT_*_KEY_PATH.
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
