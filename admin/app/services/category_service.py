@@ -20,6 +20,8 @@ def _to_out(category: Category, children: list[CategoryOut] | None = None) -> Ca
         slug=category.slug,
         description=category.description,
         image_r2_key=category.image_r2_key,
+        kind=getattr(category, "kind", None)
+        or ("section" if category.parent_id is None else "category"),
         sort_order=category.sort_order,
         status=category.status,
         path=category.path,
@@ -74,6 +76,24 @@ class CategoryService:
             parent = await self._repo.get_by_id(payload.parent_id)
             if not parent:
                 raise ValidationError("Parent category not found")
+            parent_kind = getattr(parent, "kind", None) or (
+                "section" if parent.parent_id is None else "category"
+            )
+            if parent_kind != "section":
+                raise ValidationError("Categories can only be created under a section")
+            if payload.kind == "section":
+                raise ValidationError("Sections cannot have a parent")
+        else:
+            if payload.kind == "category":
+                raise ValidationError("Categories require a parent section")
+
+        kind = "category" if payload.parent_id else "section"
+        if payload.kind:
+            kind = payload.kind
+            if kind == "section" and payload.parent_id:
+                raise ValidationError("Sections must be root (no parent)")
+            if kind == "category" and not payload.parent_id:
+                raise ValidationError("Categories require a parent section")
 
         category = await self._repo.create(
             {
@@ -82,6 +102,7 @@ class CategoryService:
                 "parent_id": payload.parent_id,
                 "description": payload.description,
                 "image_r2_key": payload.image_r2_key,
+                "kind": kind,
                 "sort_order": payload.sort_order,
                 "status": payload.status,
                 "metadata_": payload.metadata,

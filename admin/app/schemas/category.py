@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -11,6 +11,7 @@ class CategoryCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     slug: str | None = None
     parent_id: UUID | None = None
+    kind: Literal["section", "category"] | None = None
     description: str | None = None
     image_r2_key: str | None = None
     sort_order: int = 0
@@ -36,6 +37,7 @@ class CategoryOut(BaseModel):
     slug: str
     description: str | None = None
     image_r2_key: str | None = None
+    kind: str = "category"
     sort_order: int
     status: str
     path: str | None = None

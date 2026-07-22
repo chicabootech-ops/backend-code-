@@ -21,7 +21,11 @@ class Settings(BaseSettings):
 
     @property
     def database_dsn(self) -> str:
-        return self.database_url.split("?", 1)[0]
+        """Keep SSL query params for Neon; strip only empty trailing ?."""
+        url = self.database_url.strip()
+        if url.endswith("?"):
+            return url[:-1]
+        return url
 
     r2_bucket: str = "chicaboo-assets"
     r2_account_id: str = ""
