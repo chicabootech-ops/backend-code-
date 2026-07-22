@@ -33,6 +33,7 @@ from app.identity.schemas.auth import (
     ForgotPasswordRequest,
     LoginRequest,
     RegisterRequest,
+    ResendVerificationRequest,
     ResetPasswordRequest,
     TokenResponse,
     VerifyEmailRequest,
@@ -147,7 +148,48 @@ class AuthService:
             user_agent=ctx.user_agent,
         )
 
+        hydrated = await users.get_by_id(user.id)
+        first_name = (
+            hydrated.profile.first_name if hydrated and hydrated.profile else None
+        )
+        await self._email.send_welcome(to_email=user.email, first_name=first_name)
+
         return MessageResponse(message="Email verified successfully.")
+
+    async def resend_verification(
+        self,
+        session: AsyncSession,
+        body: ResendVerificationRequest,
+        ctx: ClientContext,
+    ) -> MessageResponse:
+        await self._rate_limit.check(
+            "resend_verification",
+            normalize_email(body.email),
+            limit=self._settings.rate_limit_resend_verification,
+            window_seconds=900,
+        )
+
+        email_norm = normalize_email(body.email)
+        users = UserRepository(session)
+        user = await users.get_by_email_normalized(email_norm)
+
+        # Same message either way — avoid email enumeration
+        message = MessageResponse(
+            message="If an account needs verification, a new code has been sent."
+        )
+        if not user or user.email_verified:
+            return message
+
+        await self._issue_email_otp(session, email=user.email, purpose="registration")
+
+        security = SecurityLogRepository(session)
+        await security.record(
+            user_id=user.id,
+            event_type="verification_resent",
+            ip_address=ctx.ip_address,
+            user_agent=ctx.user_agent,
+        )
+        return message
 
     async def login(
         self,

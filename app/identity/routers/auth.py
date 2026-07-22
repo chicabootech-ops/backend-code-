@@ -16,6 +16,7 @@ from app.identity.schemas.auth import (
     LogoutRequest,
     RefreshRequest,
     RegisterRequest,
+    ResendVerificationRequest,
     ResetPasswordRequest,
     TokenResponse,
     VerifyEmailRequest,
@@ -63,6 +64,16 @@ async def verify_email(
     ctx: ClientCtx,
 ) -> MessageResponse:
     return await auth.verify_email(session, body, ctx)
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+async def resend_verification(
+    body: ResendVerificationRequest,
+    session: DbSession,
+    auth: AuthServiceDep,
+    ctx: ClientCtx,
+) -> MessageResponse:
+    return await auth.resend_verification(session, body, ctx)
 
 
 @router.post("/login", response_model=TokenResponse)

@@ -42,13 +42,27 @@ class Settings(BaseSettings):
     otp_ttl_seconds: int = 600
     password_reset_ttl_seconds: int = 3600
 
+    # Public site URL (password reset links, email branding)
+    site_url: str = "https://www.chicaboo.co"
+
+    # Email — Resend primary, SMTP fallback
     resend_api_key: str = ""
-    email_from: str = "noreply@chicaboo.com"
+    email_from: str = "noreply@chicaboo.co"
+    email_from_name: str = "Chic A Boo"
+    email_reply_to: str = "support@chicaboo.co"
+    email_admin: str = "admin@chicaboo.co"
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_secure: bool = False
     smtp_user: str = ""
     smtp_pass: str = ""
+
+    # Message Central (VerifyNow) SMS OTP
+    message_central_customer_id: str = ""
+    message_central_email: str = ""
+    message_central_password: str = ""
+    message_central_country_code: str = "91"
+    message_central_otp_length: int = 6
 
     max_failed_login_attempts: int = 5
     account_lockout_minutes: int = 30
@@ -59,6 +73,8 @@ class Settings(BaseSettings):
     rate_limit_forgot_password: int = 5
     rate_limit_reset_password: int = 10
     rate_limit_refresh: int = 30
+    rate_limit_phone_otp: int = 5
+    rate_limit_resend_verification: int = 5
 
     # Admin JWT (HS256)
     admin_jwt_secret: str = ""

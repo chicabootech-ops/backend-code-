@@ -15,6 +15,7 @@ from app.db.session import create_engine, create_session_factory
 from app.identity.core.exception_handlers import register_exception_handlers as register_identity_handlers
 from app.identity.core.redis.client import RedisClient
 from app.identity.core.security.jwt import JWTManager
+from app.identity.integrations.message_central import MessageCentralClient
 from app.identity.integrations.r2.client import R2Client
 from app.identity.middleware.request_context import RequestContextMiddleware
 from app.identity.routers import (
@@ -22,6 +23,7 @@ from app.identity.routers import (
     auth as identity_auth,
     avatar,
     internal,
+    phone,
     preferences,
     security,
     user,
@@ -30,6 +32,7 @@ from app.identity.services.account_service import AccountService
 from app.identity.services.auth_service import AuthService
 from app.identity.services.avatar_service import AvatarService
 from app.identity.services.email_service import EmailService
+from app.identity.services.phone_service import PhoneService
 from app.identity.services.rate_limit_service import RateLimitService
 from app.identity.services.token_service import TokenService
 
@@ -87,9 +90,21 @@ async def lifespan(app: FastAPI):
         get_ttl_seconds=settings.avatar_get_url_ttl_seconds,
     )
     avatar_service = AvatarService(r2_client)
+    message_central = MessageCentralClient(settings)
+    phone_service = PhoneService(settings, redis_client, rate_limit_service, message_central)
 
     if not settings.admin_jwt_secret:
         logger.warning("ADMIN_JWT_SECRET is empty — set it in .env")
+    if not message_central.configured:
+        logger.warning(
+            "Message Central not configured — phone OTP disabled until "
+            "MESSAGE_CENTRAL_CUSTOMER_ID / EMAIL / PASSWORD are set"
+        )
+    if not settings.resend_api_key and not (
+        settings.smtp_host and settings.smtp_user and settings.smtp_pass
+    ):
+        logger.warning("No email provider configured — set RESEND_API_KEY or SMTP_*")
+
     admin_jwt_manager = AdminJWTManager(settings.admin_jwt_secret, settings.admin_jwt_ttl_seconds)
 
     app.state.engine = engine
@@ -100,6 +115,8 @@ async def lifespan(app: FastAPI):
     app.state.auth_service = auth_service
     app.state.account_service = account_service
     app.state.avatar_service = avatar_service
+    app.state.phone_service = phone_service
+    app.state.email_service = email_service
 
     logger.info("Chic A Boo API started (env=%s)", settings.app_env)
     yield
@@ -132,6 +149,7 @@ app.add_middleware(AdminGuardMiddleware)
 # Identity
 app.include_router(identity_auth.router)
 app.include_router(user.router)
+app.include_router(phone.router)
 app.include_router(addresses.router)
 app.include_router(preferences.router)
 app.include_router(security.router)
