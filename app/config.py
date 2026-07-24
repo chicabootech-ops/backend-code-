@@ -102,7 +102,36 @@ class Settings(BaseSettings):
     razorpay_key_secret: str = ""
     razorpay_webhook_secret: str = ""
 
+    # Storefront checkout / commerce
+    shipping_flat_paise: int = 0
+    free_shipping_threshold_paise: int = 0  # 0 disables free-shipping logic
+    # Default GST rate in basis points applied when a product has no explicit
+    # tax_rate_bps in metadata (1800 = 18%, 500 = 5%, 0 = exempt).
+    default_gst_rate_bps: int = 0
+    # Prices in the catalog are GST-inclusive (Indian retail convention).
+    prices_include_gst: bool = True
+
+    # Company / seller details printed on the GST tax invoice
+    company_legal_name: str = "Chic A Boo"
+    company_address_line1: str = ""
+    company_address_line2: str = ""
+    company_city: str = ""
+    company_state: str = ""
+    company_state_code: str = ""  # GST state code, e.g. "09" for Uttar Pradesh
+    company_postal_code: str = ""
+    company_country: str = "India"
+    company_gstin: str = ""
+    company_pan: str = ""
+    company_email: str = "support@chicaboo.co"
+    company_phone: str = ""
+    invoice_prefix: str = "CAB"
+    invoice_r2_prefix: str = "invoices"
+
     sentry_dsn: str = ""
+
+    @property
+    def razorpay_configured(self) -> bool:
+        return bool(self.razorpay_key_id and self.razorpay_key_secret)
 
     @property
     def database_dsn(self) -> str:
