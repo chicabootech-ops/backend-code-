@@ -48,6 +48,7 @@ from app.admin_api.routers import (
     categories as admin_categories,
     coupons,
     inventory,
+    invoices as admin_invoices,
     orders as admin_orders,
     products as admin_products,
     users as admin_users,
@@ -137,6 +138,35 @@ app = FastAPI(
 register_identity_handlers(app)
 register_admin_handlers(app)
 
+
+from app.storefront.lib.razorpay_client import PaymentGatewayError
+from app.storefront.services.order_service import OrderError
+from app.storefront.services.payment_service import CheckoutError
+
+
+@app.exception_handler(CheckoutError)
+async def _handle_checkout_error(_request: Request, exc: CheckoutError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": exc.code, "message": exc.message}},
+    )
+
+
+@app.exception_handler(OrderError)
+async def _handle_order_error(_request: Request, exc: OrderError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": exc.code, "message": exc.message}},
+    )
+
+
+@app.exception_handler(PaymentGatewayError)
+async def _handle_gateway_error(_request: Request, exc: PaymentGatewayError) -> JSONResponse:
+    return JSONResponse(
+        status_code=502,
+        content={"error": {"code": exc.code, "message": exc.message}},
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list or ["*"],
@@ -171,6 +201,7 @@ app.include_router(admin_categories.router)
 app.include_router(admin_products.router)
 app.include_router(admin_users.router)
 app.include_router(admin_orders.router)
+app.include_router(admin_invoices.router)
 app.include_router(inventory.router)
 app.include_router(analytics.router)
 app.include_router(coupons.router)

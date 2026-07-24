@@ -71,3 +71,26 @@ class ProductRepository:
             )
         )
         return list(result.scalars().all())
+
+    async def get_variant_by_id(self, variant_id: uuid.UUID) -> ProductVariant | None:
+        result = await self._session.execute(
+            select(ProductVariant).where(
+                ProductVariant.id == variant_id,
+                ProductVariant.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id(self, product_id: uuid.UUID) -> Product | None:
+        result = await self._session.execute(
+            select(Product).where(
+                Product.id == product_id,
+                Product.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_default_variant(self, product_id: uuid.UUID) -> ProductVariant | None:
+        variants = await self.get_variants(product_id)
+        active = [v for v in variants if v.status == "active"] or variants
+        return active[0] if active else None

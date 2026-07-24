@@ -13,6 +13,7 @@ from app.admin_api.core.security.jwt import AdminJWTManager, AdminTokenPayload
 from app.admin_api.db.session import get_session
 from app.admin_api.services.auth_service import AdminAuthService
 from app.admin_api.services.category_service import CategoryService
+from app.admin_api.services.invoice_admin_service import InvoiceAdminService
 from app.admin_api.services.order_admin_service import OrderAdminService
 from app.admin_api.services.product_service import ProductService
 from app.admin_api.services.user_admin_service import UserAdminService
@@ -70,10 +71,15 @@ async def get_order_admin_service(db: Annotated[AsyncSession, Depends(get_db)]) 
     return OrderAdminService(db)
 
 
+async def get_invoice_admin_service(db: Annotated[AsyncSession, Depends(get_db)]) -> InvoiceAdminService:
+    return InvoiceAdminService(db)
+
+
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentAdmin = Annotated[AdminTokenPayload, Depends(get_current_admin)]
 CategoryServiceDep = Annotated[CategoryService, Depends(get_category_service)]
 ProductServiceDep = Annotated[ProductService, Depends(get_product_service)]
 UserAdminServiceDep = Annotated[UserAdminService, Depends(get_user_admin_service)]
 OrderAdminServiceDep = Annotated[OrderAdminService, Depends(get_order_admin_service)]
+InvoiceAdminServiceDep = Annotated[InvoiceAdminService, Depends(get_invoice_admin_service)]
 AuthServiceDep = Annotated[AdminAuthService, Depends(get_auth_service)]
