@@ -25,7 +25,8 @@ def compute_onboarding_state(
     last_name = profile.last_name if profile else None
     metadata = profile.metadata_ if profile else {}
 
-    profile_complete = bool(first_name and last_name)
+    # Last name is optional (single-name profiles are common).
+    profile_complete = bool((first_name or "").strip())
     email_verified = user.email_verified and user.status == "active"
     has_address = address_count > 0
 
