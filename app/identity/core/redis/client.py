@@ -51,6 +51,23 @@ class RedisClient:
     async def delete_refresh_session(self, jti: str) -> None:
         await self._redis.delete(keys.refresh_session_key(jti))
 
+    # --- Generic cache (catalog response caching) ---
+    async def cache_get(self, key: str) -> bytes | None:
+        return await self._redis.get(key)
+
+    async def cache_set(self, key: str, value: bytes, ttl_seconds: int) -> None:
+        await self._redis.setex(key, ttl_seconds, value)
+
+    async def incr(self, key: str) -> int:
+        return int(await self._redis.incr(key))
+
+    async def get_int(self, key: str) -> int:
+        value = await self._redis.get(key)
+        try:
+            return int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
     # --- Rate limiting ---
     async def increment_rate_limit(
         self,

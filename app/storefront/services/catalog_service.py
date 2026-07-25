@@ -14,6 +14,7 @@ from app.storefront.schemas.product import (
     StorefrontProductDetailOut,
     StorefrontProductListResponse,
     StorefrontProductOut,
+    StorefrontProductVariantOut,
 )
 from app.storefront.schemas.section import (
     StorefrontSectionDetailOut,
@@ -86,6 +87,7 @@ class CatalogService:
             items.append(
                 StorefrontSectionOut(
                     **category_to_out(section).model_dump(exclude={"kind"}),
+                    metadata=section.metadata_ or {},
                     products=[
                         product_to_out(
                             p,
@@ -111,6 +113,7 @@ class CatalogService:
         cat_by_id = {c.id: c for c in children}
         return StorefrontSectionDetailOut(
             **category_to_out(section).model_dump(exclude={"kind"}),
+            metadata=section.metadata_ or {},
             products=[
                 product_to_out(
                     p,
@@ -188,10 +191,32 @@ class CatalogService:
             compare_at_price_paise=compare,
             category=category,
         )
+        meta = product.metadata_ or {}
+        gallery_raw = meta.get("gallery") or meta.get("images") or []
+        gallery: list[str] = []
+        primary = product_image_url(meta)
+        if primary:
+            gallery.append(primary)
+        if isinstance(gallery_raw, list):
+            for item in gallery_raw:
+                url = resolve_storage_url(item) if isinstance(item, str) else None
+                if url and url not in gallery:
+                    gallery.append(url)
         return StorefrontProductDetailOut(
             **base.model_dump(),
             brand=product.brand,
             is_featured=product.is_featured,
+            gallery=gallery,
+            variants=[
+                StorefrontProductVariantOut(
+                    id=v.id,
+                    title=v.title,
+                    sku=v.sku,
+                    price_paise=v.price_paise,
+                    compare_at_price_paise=v.compare_at_price_paise,
+                )
+                for v in active
+            ],
         )
 
     async def list_products(
@@ -200,6 +225,9 @@ class CatalogService:
         category_slug: str | None = None,
         page: int = 1,
         page_size: int = 24,
+        sort: str = "newest",
+        min_price_paise: int | None = None,
+        max_price_paise: int | None = None,
     ) -> StorefrontProductListResponse:
         if not category_slug:
             return StorefrontProductListResponse(items=[], total=0, page=page, page_size=page_size)
@@ -208,20 +236,35 @@ class CatalogService:
         if not category or category.parent_id is None:
             return StorefrontProductListResponse(items=[], total=0, page=page, page_size=page_size)
 
-        products, total = await self._products.list_active_by_category(
-            category.id, page=page, page_size=page_size
+        # Fetch a wider window then filter/sort for price facets (categories are small).
+        products, _ = await self._products.list_active_by_category(
+            category.id, page=1, page_size=200
         )
         prices = await self._price_map(products)
+        items = [
+            product_to_out(
+                p,
+                price_paise=prices[p.id][0],
+                compare_at_price_paise=prices[p.id][1],
+                category=category,
+            )
+            for p in products
+        ]
+        if min_price_paise is not None:
+            items = [i for i in items if i.price_paise >= min_price_paise]
+        if max_price_paise is not None:
+            items = [i for i in items if i.price_paise <= max_price_paise]
+        if sort == "price_asc":
+            items.sort(key=lambda i: i.price_paise)
+        elif sort == "price_desc":
+            items.sort(key=lambda i: i.price_paise, reverse=True)
+        elif sort == "name":
+            items.sort(key=lambda i: i.name.lower())
+        total = len(items)
+        start = (page - 1) * page_size
+        page_items = items[start : start + page_size]
         return StorefrontProductListResponse(
-            items=[
-                product_to_out(
-                    p,
-                    price_paise=prices[p.id][0],
-                    compare_at_price_paise=prices[p.id][1],
-                    category=category,
-                )
-                for p in products
-            ],
+            items=page_items,
             total=total,
             page=page,
             page_size=page_size,

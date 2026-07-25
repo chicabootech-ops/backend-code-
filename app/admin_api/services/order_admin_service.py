@@ -26,7 +26,7 @@ def _order_out(order: Order, tracking: list[OrderStatusHistory] | None = None) -
         created_at=order.created_at,
         updated_at=order.updated_at,
         tracking=[
-            OrderTrackingEvent(status=h.status, note=h.note, created_at=h.created_at)
+            OrderTrackingEvent(status=h.to_status, note=h.reason, created_at=h.created_at)
             for h in (tracking or [])
         ],
     )

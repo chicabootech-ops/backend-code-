@@ -10,11 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.storefront.db.session import get_session
+from app.storefront.lib.catalog_cache import CatalogCache
 from app.storefront.lib.razorpay_client import RazorpayClient
+from app.storefront.services.cart_service import CartService
+from app.storefront.services.cached_catalog_service import CachedCatalogService
 from app.storefront.services.catalog_service import CatalogService
 from app.storefront.services.category_service import CategoryService
+from app.storefront.services.newsletter_service import NewsletterService
+from app.storefront.services.notification_service import NotificationService
 from app.storefront.services.order_service import OrderService
 from app.storefront.services.payment_service import PaymentService
+from app.storefront.services.return_service import ReturnService
+from app.storefront.services.review_service import ReviewService
+from app.storefront.services.search_service import SearchService
+from app.storefront.services.wishlist_service import WishlistService
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -67,8 +76,9 @@ async def get_category_service(db: DbSession) -> CategoryService:
     return CategoryService(db)
 
 
-async def get_catalog_service(db: DbSession) -> CatalogService:
-    return CatalogService(db)
+async def get_catalog_service(request: Request, db: DbSession) -> CachedCatalogService:
+    redis = getattr(request.app.state, "redis_client", None)
+    return CachedCatalogService(CatalogService(db), CatalogCache(redis))
 
 
 async def get_order_service(db: DbSession) -> OrderService:
@@ -84,7 +94,42 @@ async def get_payment_service(request: Request, db: DbSession) -> PaymentService
     )
 
 
+async def get_cart_service(db: DbSession) -> CartService:
+    return CartService(db)
+
+
+async def get_wishlist_service(db: DbSession) -> WishlistService:
+    return WishlistService(db)
+
+
+async def get_search_service(db: DbSession) -> SearchService:
+    return SearchService(db)
+
+
+async def get_review_service(db: DbSession) -> ReviewService:
+    return ReviewService(db)
+
+
+async def get_return_service(db: DbSession) -> ReturnService:
+    return ReturnService(db)
+
+
+async def get_newsletter_service(request: Request, db: DbSession) -> NewsletterService:
+    return NewsletterService(db, getattr(request.app.state, "email_service", None))
+
+
+async def get_notification_service(db: DbSession) -> NotificationService:
+    return NotificationService(db)
+
+
 CategoryServiceDep = Annotated[CategoryService, Depends(get_category_service)]
-CatalogServiceDep = Annotated[CatalogService, Depends(get_catalog_service)]
+CatalogServiceDep = Annotated[CachedCatalogService, Depends(get_catalog_service)]
 OrderServiceDep = Annotated[OrderService, Depends(get_order_service)]
 PaymentServiceDep = Annotated[PaymentService, Depends(get_payment_service)]
+CartServiceDep = Annotated[CartService, Depends(get_cart_service)]
+WishlistServiceDep = Annotated[WishlistService, Depends(get_wishlist_service)]
+SearchServiceDep = Annotated[SearchService, Depends(get_search_service)]
+ReviewServiceDep = Annotated[ReviewService, Depends(get_review_service)]
+ReturnServiceDep = Annotated[ReturnService, Depends(get_return_service)]
+NewsletterServiceDep = Annotated[NewsletterService, Depends(get_newsletter_service)]
+NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]

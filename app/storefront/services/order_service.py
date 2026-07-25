@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.storefront.models.commerce import Invoice, Order
 from app.storefront.repositories.invoice_repository import InvoiceRepository
 from app.storefront.repositories.order_repository import OrderRepository
+from app.storefront.services.inventory_service import InventoryService
 from app.storefront.schemas.order import (
     OrderInvoiceOut,
     OrderItemOut,
@@ -33,6 +34,7 @@ class OrderService:
         self._orders = OrderRepository(session)
         self._invoices = InvoiceRepository(session)
         self._invoice_service = InvoiceService(session)
+        self._inventory = InventoryService(session)
 
     async def list_orders(
         self, user_id: uuid.UUID, *, page: int = 1, page_size: int = 20
@@ -68,15 +70,18 @@ class OrderService:
                 status_code=409,
                 code="not_cancellable",
             )
+        previous_status = order.status
         await self._orders.cancel(order, reason=reason)
         await self._orders.add_status_history(
             order.id,
             to_status="cancelled",
-            from_status=order.status,
+            from_status=previous_status,
             changed_by_type="customer",
             changed_by_id=user_id,
             reason=reason,
         )
+        # Return any reserved stock to the pool.
+        await self._inventory.release(order.id)
         await self._session.commit()
         return await self._to_out(order)
 

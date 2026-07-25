@@ -32,6 +32,8 @@ from app.storefront.schemas.payment import (
     RazorpayCheckoutOut,
     VerifyPaymentRequest,
 )
+from app.storefront.services.coupon_service import CouponError, CouponService
+from app.storefront.services.inventory_service import InventoryService, OutOfStockError
 from app.storefront.services.invoice_service import InvoiceService
 from app.storefront.services.pricing import price_order
 
@@ -60,6 +62,8 @@ class PaymentService:
         self._invoices = InvoiceRepository(session)
         self._products = ProductRepository(session)
         self._invoice_service = InvoiceService(session)
+        self._inventory = InventoryService(session)
+        self._coupons = CouponService(session)
         self._razorpay = razorpay
         self._email = email_service
 
@@ -113,6 +117,28 @@ class PaymentService:
         if priced.grand_total_paise <= 0:
             raise CheckoutError("Cart total must be greater than zero.")
 
+        # Apply a coupon if provided (validates expiry / usage limits / min order).
+        discount_paise = 0
+        coupon_id = None
+        coupon_code = None
+        if request.coupon_code:
+            try:
+                coupon = await self._coupons.validate(
+                    request.coupon_code,
+                    user_id=user_id,
+                    subtotal_paise=priced.subtotal_paise,
+                    shipping_paise=priced.shipping_paise,
+                )
+            except CouponError as exc:
+                raise CheckoutError(exc.message, status_code=400, code=exc.code) from exc
+            discount_paise = coupon.discount_paise
+            coupon_id = coupon.coupon_id
+            coupon_code = coupon.code
+
+        final_total = max(0, priced.grand_total_paise - discount_paise)
+        if final_total <= 0:
+            raise CheckoutError("Order total after discount must be greater than zero.")
+
         user_email = await self._user_email(user_id) or request.email
 
         order = Order(
@@ -123,10 +149,12 @@ class PaymentService:
             fulfillment_status="unfulfilled",
             currency="INR",
             subtotal_paise=priced.subtotal_paise,
-            discount_paise=priced.discount_paise,
+            discount_paise=discount_paise,
             tax_paise=priced.tax_paise,
             shipping_paise=priced.shipping_paise,
-            grand_total_paise=priced.grand_total_paise,
+            grand_total_paise=final_total,
+            coupon_id=coupon_id,
+            coupon_code=coupon_code,
             shipping_address=shipping,
             billing_address=billing or shipping,
             gstin=(request.gstin or None),
@@ -174,10 +202,31 @@ class PaymentService:
             order.id, to_status="pending", from_status=None, reason="Order placed"
         )
 
+        # Reserve stock (opt-in per variant). Raises within this transaction, so a
+        # stock shortfall rolls the whole checkout back — no order/reservation left.
+        try:
+            await self._inventory.reserve(
+                order_id=order.id,
+                items=[
+                    {
+                        "product_variant_id": p.product_variant_id,
+                        "quantity": p.quantity,
+                        "product_name": p.product_name,
+                    }
+                    for p in priced.items
+                ],
+            )
+        except OutOfStockError as exc:
+            raise CheckoutError(
+                f"Sorry, these just sold out: {', '.join(exc.unavailable)}.",
+                status_code=409,
+                code="out_of_stock",
+            ) from exc
+
         # Create the Razorpay order
         try:
             rp_order = await self._razorpay.create_order(
-                amount_paise=priced.grand_total_paise,
+                amount_paise=final_total,
                 receipt=f"cab-{order.order_number}",
                 notes={"order_id": str(order.id), "order_number": str(order.order_number)},
             )
@@ -192,7 +241,7 @@ class PaymentService:
                 attempt_number=attempt,
                 provider="razorpay",
                 provider_order_id=rp_order.get("id"),
-                amount_paise=priced.grand_total_paise,
+                amount_paise=final_total,
                 currency="INR",
                 status="created",
                 metadata_={"receipt": rp_order.get("receipt")},
@@ -203,12 +252,12 @@ class PaymentService:
         return CheckoutResponse(
             order_id=order.id,
             order_number=order.order_number,
-            grand_total_paise=order.grand_total_paise,
+            grand_total_paise=final_total,
             payment_status=order.payment_status,
             razorpay=RazorpayCheckoutOut(
                 key_id=self._razorpay.key_id,
                 razorpay_order_id=rp_order["id"],
-                amount_paise=priced.grand_total_paise,
+                amount_paise=final_total,
                 currency="INR",
                 description=f"Chic A Boo Order #{order.order_number}",
                 prefill_name=shipping.get("full_name"),
@@ -343,6 +392,15 @@ class PaymentService:
             from_status="pending",
             reason="Payment captured",
         )
+        # Commit the reserved stock and record coupon redemption.
+        await self._inventory.commit(order.id)
+        if order.coupon_id:
+            await self._coupons.record_usage(
+                coupon_id=order.coupon_id,
+                user_id=order.user_id,
+                order_id=order.id,
+                discount_paise=order.discount_paise,
+            )
 
     async def _post_payment(self, order: Order) -> None:
         """After commit: generate the invoice and email it to the customer (best-effort)."""

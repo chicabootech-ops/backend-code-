@@ -12,8 +12,18 @@ async def list_products(
     category: str | None = Query(default=None, description="Category slug"),
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
+    sort: str = Query("newest", pattern="^(newest|price_asc|price_desc|name)$"),
+    min_price_paise: int | None = Query(default=None, ge=0),
+    max_price_paise: int | None = Query(default=None, ge=0),
 ) -> StorefrontProductListResponse:
-    return await service.list_products(category_slug=category, page=page, page_size=page_size)
+    return await service.list_products(
+        category_slug=category,
+        page=page,
+        page_size=page_size,
+        sort=sort,
+        min_price_paise=min_price_paise,
+        max_price_paise=max_price_paise,
+    )
 
 
 @router.get("/{slug}", response_model=StorefrontProductDetailOut)

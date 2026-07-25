@@ -216,6 +216,9 @@ class OrderStatusHistory(Base):
     order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("commerce.orders.id"), nullable=False
     )
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    note: Mapped[str | None] = mapped_column(Text)
+    from_status: Mapped[str | None] = mapped_column(Text)
+    to_status: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_by_type: Mapped[str] = mapped_column(Text, nullable=False, default="admin")
+    changed_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

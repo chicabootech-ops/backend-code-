@@ -37,7 +37,20 @@ from app.identity.services.phone_service import PhoneService
 from app.identity.services.rate_limit_service import RateLimitService
 from app.identity.services.token_service import TokenService
 
-from app.storefront.routers import cart, categories, orders, payments, products, sections
+from app.storefront.routers import (
+    cart,
+    categories,
+    newsletter,
+    notifications,
+    orders,
+    payments,
+    products,
+    returns,
+    reviews,
+    search,
+    sections,
+    wishlist,
+)
 
 from app.admin_api.core.exception_handlers import register_exception_handlers as register_admin_handlers
 from app.admin_api.core.security.jwt import AdminJWTManager
@@ -49,6 +62,7 @@ from app.admin_api.routers import (
     coupons,
     inventory,
     invoices as admin_invoices,
+    maintenance as admin_maintenance,
     orders as admin_orders,
     products as admin_products,
     users as admin_users,
@@ -191,9 +205,15 @@ app.include_router(internal.router)
 app.include_router(products.router)
 app.include_router(categories.router)
 app.include_router(sections.router)
+app.include_router(search.router)
 app.include_router(cart.router)
+app.include_router(wishlist.router)
 app.include_router(orders.router)
 app.include_router(payments.router)
+app.include_router(reviews.router)
+app.include_router(returns.router)
+app.include_router(newsletter.router)
+app.include_router(notifications.router)
 
 # Admin
 app.include_router(admin_auth.router)
@@ -202,6 +222,7 @@ app.include_router(admin_products.router)
 app.include_router(admin_users.router)
 app.include_router(admin_orders.router)
 app.include_router(admin_invoices.router)
+app.include_router(admin_maintenance.router)
 app.include_router(inventory.router)
 app.include_router(analytics.router)
 app.include_router(coupons.router)

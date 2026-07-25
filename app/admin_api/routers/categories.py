@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Query, Request
 
-from app.admin_api.dependencies import CategoryServiceDep, CurrentAdmin
+from app.admin_api.dependencies import CatalogCacheDep, CategoryServiceDep, CurrentAdmin
 from app.admin_api.schemas.category import CategoryCreate, CategoryOut, CategoryUpdate
 
 router = APIRouter(prefix="/admin/categories", tags=["admin-categories"])
@@ -36,9 +36,12 @@ async def create_category(
     payload: CategoryCreate,
     admin: CurrentAdmin,
     service: CategoryServiceDep,
+    cache: CatalogCacheDep,
     request: Request,
 ):
-    return await service.create(payload, admin_id=admin.sub, ip_address=_ip(request))
+    result = await service.create(payload, admin_id=admin.sub, ip_address=_ip(request))
+    await cache.bump()
+    return result
 
 
 @router.patch("/{category_id}", response_model=CategoryOut)
@@ -47,9 +50,12 @@ async def update_category(
     payload: CategoryUpdate,
     admin: CurrentAdmin,
     service: CategoryServiceDep,
+    cache: CatalogCacheDep,
     request: Request,
 ):
-    return await service.update(category_id, payload, admin_id=admin.sub, ip_address=_ip(request))
+    result = await service.update(category_id, payload, admin_id=admin.sub, ip_address=_ip(request))
+    await cache.bump()
+    return result
 
 
 @router.delete("/{category_id}", status_code=204)
@@ -57,6 +63,8 @@ async def delete_category(
     category_id: uuid.UUID,
     admin: CurrentAdmin,
     service: CategoryServiceDep,
+    cache: CatalogCacheDep,
     request: Request,
 ):
     await service.delete(category_id, admin_id=admin.sub, ip_address=_ip(request))
+    await cache.bump()

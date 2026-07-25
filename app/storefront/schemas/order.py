@@ -46,6 +46,7 @@ class CheckoutRequest(BaseModel):
     billing_address: CheckoutAddressIn | None = None
     customer_note: str | None = Field(default=None, max_length=1000)
     gstin: str | None = Field(default=None, max_length=20)
+    coupon_code: str | None = Field(default=None, max_length=64)
     email: str | None = None  # for guest checkout
     # Client-generated key so a double-submit / retry / refresh reuses the same
     # pending order + Razorpay order instead of creating duplicates.

@@ -11,8 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.admin_api.core.exceptions import UnauthorizedError
 from app.admin_api.core.security.jwt import AdminJWTManager, AdminTokenPayload
 from app.admin_api.db.session import get_session
+from app.storefront.lib.catalog_cache import CatalogCache
 from app.admin_api.services.auth_service import AdminAuthService
 from app.admin_api.services.category_service import CategoryService
+from app.admin_api.services.coupon_admin_service import CouponAdminService
+from app.admin_api.services.inventory_admin_service import InventoryAdminService
 from app.admin_api.services.invoice_admin_service import InvoiceAdminService
 from app.admin_api.services.order_admin_service import OrderAdminService
 from app.admin_api.services.product_service import ProductService
@@ -75,6 +78,20 @@ async def get_invoice_admin_service(db: Annotated[AsyncSession, Depends(get_db)]
     return InvoiceAdminService(db)
 
 
+async def get_coupon_admin_service(db: Annotated[AsyncSession, Depends(get_db)]) -> CouponAdminService:
+    return CouponAdminService(db)
+
+
+async def get_inventory_admin_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> InventoryAdminService:
+    return InventoryAdminService(db)
+
+
+def get_catalog_cache(request: Request) -> CatalogCache:
+    return CatalogCache(getattr(request.app.state, "redis_client", None))
+
+
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentAdmin = Annotated[AdminTokenPayload, Depends(get_current_admin)]
 CategoryServiceDep = Annotated[CategoryService, Depends(get_category_service)]
@@ -82,4 +99,7 @@ ProductServiceDep = Annotated[ProductService, Depends(get_product_service)]
 UserAdminServiceDep = Annotated[UserAdminService, Depends(get_user_admin_service)]
 OrderAdminServiceDep = Annotated[OrderAdminService, Depends(get_order_admin_service)]
 InvoiceAdminServiceDep = Annotated[InvoiceAdminService, Depends(get_invoice_admin_service)]
+CouponAdminServiceDep = Annotated[CouponAdminService, Depends(get_coupon_admin_service)]
+InventoryAdminServiceDep = Annotated[InventoryAdminService, Depends(get_inventory_admin_service)]
+CatalogCacheDep = Annotated[CatalogCache, Depends(get_catalog_cache)]
 AuthServiceDep = Annotated[AdminAuthService, Depends(get_auth_service)]

@@ -19,9 +19,19 @@ class StorefrontProductOut(BaseModel):
     category_name: str | None = None
 
 
+class StorefrontProductVariantOut(BaseModel):
+    id: UUID
+    title: str
+    sku: str
+    price_paise: int
+    compare_at_price_paise: int | None = None
+
+
 class StorefrontProductDetailOut(StorefrontProductOut):
     brand: str | None = None
     is_featured: bool = False
+    gallery: list[str] = Field(default_factory=list)
+    variants: list[StorefrontProductVariantOut] = Field(default_factory=list)
 
 
 class StorefrontProductListResponse(BaseModel):

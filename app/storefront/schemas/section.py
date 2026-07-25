@@ -15,6 +15,7 @@ class StorefrontSectionOut(BaseModel):
     description: str | None = None
     image_url: str | None = None
     sort_order: int = 0
+    metadata: dict = Field(default_factory=dict)
     products: list[StorefrontProductOut] = Field(default_factory=list)
     categories: list[StorefrontCategoryOut] = Field(default_factory=list)
 

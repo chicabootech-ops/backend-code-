@@ -63,6 +63,10 @@ class OrderRepository:
         status: str,
         note: str | None,
     ) -> Order | None:
+        existing = await self.get_by_id(order_id)
+        if not existing:
+            return None
+        from_status = existing.status
         result = await self._session.execute(
             update(Order)
             .where(Order.id == order_id)
@@ -72,7 +76,13 @@ class OrderRepository:
         order = result.scalar_one_or_none()
         if not order:
             return None
-        history = OrderStatusHistory(order_id=order_id, status=status, note=note)
+        history = OrderStatusHistory(
+            order_id=order_id,
+            from_status=from_status,
+            to_status=status,
+            changed_by_type="admin",
+            reason=note,
+        )
         self._session.add(history)
         await self._session.flush()
         await self._session.refresh(order)

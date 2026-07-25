@@ -48,6 +48,23 @@ class EmailService:
         subject, html = templates.welcome_email(first_name=first_name, site_url=self.site_url)
         await self._send(to_email=to_email, subject=subject, html=html, required=False)
 
+    async def send_newsletter_confirmation(
+        self, *, to_email: str, confirm_token: str
+    ) -> None:
+        confirm_url = f"{self.site_url}/api/newsletter/confirm?token={confirm_token}"
+        html = (
+            "<h1>Confirm your Chic A Boo subscription</h1>"
+            "<p>One last step before the little joys arrive in your inbox.</p>"
+            f'<p><a href="{confirm_url}">Confirm subscription</a></p>'
+            "<p>If you did not request this, you can ignore this email.</p>"
+        )
+        await self._send(
+            to_email=to_email,
+            subject="Confirm your Chic A Boo subscription",
+            html=html,
+            required=False,
+        )
+
     async def send_order_confirmation(
         self,
         *,

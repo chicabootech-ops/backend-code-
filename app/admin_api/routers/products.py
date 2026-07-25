@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Query, Request
 
-from app.admin_api.dependencies import CurrentAdmin, ProductServiceDep
+from app.admin_api.dependencies import CatalogCacheDep, CurrentAdmin, ProductServiceDep
 from app.admin_api.schemas.product import ProductCreate, ProductOut, ProductUpdate
 
 router = APIRouter(prefix="/admin/products", tags=["admin-products"])
@@ -43,9 +43,12 @@ async def create_product(
     payload: ProductCreate,
     admin: CurrentAdmin,
     service: ProductServiceDep,
+    cache: CatalogCacheDep,
     request: Request,
 ):
-    return await service.create(payload, admin_id=admin.sub, ip_address=_ip(request))
+    result = await service.create(payload, admin_id=admin.sub, ip_address=_ip(request))
+    await cache.bump()
+    return result
 
 
 @router.patch("/{product_id}", response_model=ProductOut)
@@ -54,9 +57,12 @@ async def update_product(
     payload: ProductUpdate,
     admin: CurrentAdmin,
     service: ProductServiceDep,
+    cache: CatalogCacheDep,
     request: Request,
 ):
-    return await service.update(product_id, payload, admin_id=admin.sub, ip_address=_ip(request))
+    result = await service.update(product_id, payload, admin_id=admin.sub, ip_address=_ip(request))
+    await cache.bump()
+    return result
 
 
 @router.delete("/{product_id}", status_code=204)
@@ -64,6 +70,8 @@ async def delete_product(
     product_id: uuid.UUID,
     admin: CurrentAdmin,
     service: ProductServiceDep,
+    cache: CatalogCacheDep,
     request: Request,
 ):
     await service.delete(product_id, admin_id=admin.sub, ip_address=_ip(request))
+    await cache.bump()
