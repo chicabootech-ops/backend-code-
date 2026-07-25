@@ -9,6 +9,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutError as RedisTimeoutError
 
 from app.config import settings
 from app.db.session import create_engine, create_session_factory
@@ -77,7 +80,20 @@ async def lifespan(app: FastAPI):
     engine = create_engine(settings.database_dsn)
     session_factory = create_session_factory(engine)
 
-    redis_raw = Redis.from_url(settings.redis_url, decode_responses=False)
+    # protocol=2 (RESP2): redis-py 8 defaults to RESP3, whose HELLO handshake
+    # Upstash closes ("Connection closed by server"). The health check + keepalive
+    # + retry keep pooled connections alive against Upstash's idle-close behaviour.
+    redis_raw = Redis.from_url(
+        settings.redis_url,
+        decode_responses=False,
+        protocol=2,
+        health_check_interval=30,
+        socket_keepalive=True,
+        socket_connect_timeout=10,
+        socket_timeout=10,
+        retry=Retry(ExponentialBackoff(cap=3, base=0.1), retries=3),
+        retry_on_error=[RedisConnectionError, RedisTimeoutError],
+    )
     redis_client = RedisClient(redis_raw)
 
     user_jwt_manager = JWTManager(
