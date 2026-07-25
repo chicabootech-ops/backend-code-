@@ -14,6 +14,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+from pydantic import BaseModel
+
 logger = logging.getLogger(__name__)
 
 VERSION_KEY = "catalog:ver"
@@ -29,8 +31,16 @@ class CatalogCache:
         return self._redis is not None
 
     async def get_or_set(
-        self, name: str, ttl_seconds: int, producer: Callable[[], Awaitable[T]]
+        self,
+        name: str,
+        ttl_seconds: int,
+        producer: Callable[[], Awaitable[T]],
+        *,
+        model: type[BaseModel] | None = None,
     ) -> T | Any:
+        """`model` rehydrates a hit into the same type a miss returns, so callers can
+        always touch attributes. A schema change just fails validation and falls back
+        to the producer."""
         if self._redis is None:
             return await producer()
         key = None
@@ -39,7 +49,8 @@ class CatalogCache:
             key = f"catalog:{ver}:{name}"
             cached = await self._redis.cache_get(key)
             if cached is not None:
-                return json.loads(cached)
+                payload = json.loads(cached)
+                return model.model_validate(payload) if model is not None else payload
         except Exception:  # noqa: BLE001
             return await producer()
 
