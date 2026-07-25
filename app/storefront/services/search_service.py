@@ -1,8 +1,4 @@
-"""Full-text + trigram product search (migration 000024)."""
-
 from __future__ import annotations
-
-import uuid
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
