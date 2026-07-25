@@ -24,7 +24,11 @@ class Order(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
-    order_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    order_number: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default=text("nextval('commerce.order_number_seq')"),
+    )
     user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     guest_email: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
@@ -165,7 +169,11 @@ class Invoice(Base):
     order_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("commerce.orders.id"), nullable=False
     )
-    invoice_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    invoice_number: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default=text("nextval('commerce.invoice_number_seq')"),
+    )
     pdf_r2_key: Mapped[str | None] = mapped_column(Text)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)

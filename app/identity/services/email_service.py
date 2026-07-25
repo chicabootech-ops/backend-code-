@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import smtplib
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -62,6 +64,34 @@ class EmailService:
         )
         await self._send(to_email=to_email, subject=subject, html=html, required=False)
 
+    async def send_invoice_email(
+        self,
+        *,
+        to_email: str,
+        order_number: str,
+        invoice_number: str,
+        total_label: str,
+        pdf_bytes: bytes,
+        filename: str = "invoice.pdf",
+        track_url: str | None = None,
+    ) -> None:
+        subject, html = templates.invoice_email(
+            order_number=order_number,
+            invoice_number=invoice_number,
+            total_label=total_label,
+            site_url=self.site_url,
+            track_url=track_url,
+        )
+        await self._send(
+            to_email=to_email,
+            subject=subject,
+            html=html,
+            required=False,
+            attachments=[
+                {"filename": filename, "content": pdf_bytes, "content_type": "application/pdf"}
+            ],
+        )
+
     async def send_order_shipped(
         self,
         *,
@@ -106,22 +136,36 @@ class EmailService:
             return raw
         return f"{name} <{raw}>"
 
-    async def _send(self, *, to_email: str, subject: str, html: str, required: bool = False) -> None:
+    async def _send(
+        self,
+        *,
+        to_email: str,
+        subject: str,
+        html: str,
+        required: bool = False,
+        attachments: list[dict] | None = None,
+    ) -> None:
         if self._has_resend():
             try:
-                await self._send_resend(to_email=to_email, subject=subject, html=html)
+                await self._send_resend(
+                    to_email=to_email, subject=subject, html=html, attachments=attachments
+                )
                 return
             except AppError:
                 if self._has_smtp():
                     logger.warning("Resend failed — falling back to SMTP for %s", to_email)
-                    await self._send_smtp(to_email=to_email, subject=subject, html=html)
+                    await self._send_smtp(
+                        to_email=to_email, subject=subject, html=html, attachments=attachments
+                    )
                     return
                 if required:
                     raise
                 return
 
         if self._has_smtp():
-            await self._send_smtp(to_email=to_email, subject=subject, html=html)
+            await self._send_smtp(
+                to_email=to_email, subject=subject, html=html, attachments=attachments
+            )
             return
 
         if required:
@@ -133,7 +177,14 @@ class EmailService:
 
         logger.error("Email not sent — no provider configured (to=%s)", to_email)
 
-    async def _send_resend(self, *, to_email: str, subject: str, html: str) -> None:
+    async def _send_resend(
+        self,
+        *,
+        to_email: str,
+        subject: str,
+        html: str,
+        attachments: list[dict] | None = None,
+    ) -> None:
         payload: dict = {
             "from": self._from_header(),
             "to": [to_email],
@@ -142,6 +193,14 @@ class EmailService:
         }
         if self._settings.email_reply_to:
             payload["reply_to"] = self._settings.email_reply_to
+        if attachments:
+            payload["attachments"] = [
+                {
+                    "filename": att["filename"],
+                    "content": base64.b64encode(att["content"]).decode("ascii"),
+                }
+                for att in attachments
+            ]
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 response = await client.post(
@@ -168,9 +227,18 @@ class EmailService:
                 status_code=503,
             ) from exc
 
-    async def _send_smtp(self, *, to_email: str, subject: str, html: str) -> None:
+    async def _send_smtp(
+        self,
+        *,
+        to_email: str,
+        subject: str,
+        html: str,
+        attachments: list[dict] | None = None,
+    ) -> None:
         try:
-            await asyncio.to_thread(self._send_smtp_sync, to_email, subject, html)
+            await asyncio.to_thread(
+                self._send_smtp_sync, to_email, subject, html, attachments
+            )
         except smtplib.SMTPException as exc:
             logger.exception("SMTP delivery failed for %s", to_email)
             raise AppError(
@@ -179,15 +247,33 @@ class EmailService:
                 status_code=503,
             ) from exc
 
-    def _send_smtp_sync(self, to_email: str, subject: str, html: str) -> None:
+    def _send_smtp_sync(
+        self,
+        to_email: str,
+        subject: str,
+        html: str,
+        attachments: list[dict] | None = None,
+    ) -> None:
         from_addr = self._from_header(for_smtp=True)
-        msg = MIMEMultipart("alternative")
+        if attachments:
+            msg = MIMEMultipart("mixed")
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(html, "html", "utf-8"))
+            msg.attach(alt)
+            for att in attachments:
+                part = MIMEApplication(att["content"], _subtype="pdf")
+                part.add_header(
+                    "Content-Disposition", "attachment", filename=att["filename"]
+                )
+                msg.attach(part)
+        else:
+            msg = MIMEMultipart("alternative")
+            msg.attach(MIMEText(html, "html", "utf-8"))
         msg["Subject"] = subject
         msg["From"] = from_addr
         msg["To"] = to_email
         if self._settings.email_reply_to:
             msg["Reply-To"] = self._settings.email_reply_to
-        msg.attach(MIMEText(html, "html", "utf-8"))
 
         envelope_from = self._settings.smtp_user.strip()
         port = self._settings.smtp_port

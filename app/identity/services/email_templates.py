@@ -124,6 +124,34 @@ def order_confirmation_email(
     )
 
 
+def invoice_email(
+    *,
+    order_number: str,
+    invoice_number: str,
+    total_label: str,
+    site_url: str,
+    track_url: str | None = None,
+) -> tuple[str, str]:
+    subject = f"Your Chic A Boo invoice — {order_number}"
+    track = track_url or f"{site_url.rstrip('/')}/track-order"
+    body = f"""
+      <h1 style="margin:0 0 12px;font-size:22px;color:#5c4a3a;font-family:Georgia,serif;">Thank you for your order</h1>
+      <p style="margin:0 0 12px;">Your payment for <strong>{order_number}</strong> was successful and your
+      order is confirmed. Total paid: <strong>{total_label}</strong>.</p>
+      <p style="margin:0 0 16px;">Your invoice <strong>{invoice_number}</strong> is attached to this email as a PDF for your records.</p>
+      <p style="margin:28px 0;text-align:center;">
+        <a href="{track}" style="display:inline-block;padding:14px 28px;border-radius:999px;background:#c19b54;color:#fff;text-decoration:none;font-weight:600;font-family:Arial,sans-serif;">Track your order</a>
+      </p>
+      <p style="margin:0;color:#9a8776;font-size:14px;">Every loop of yarn and every keepsake is crafted to be cherished. Thank you for shopping with us.</p>
+    """
+    return subject, _shell(
+        title=subject,
+        preheader=f"Invoice {invoice_number} for order {order_number}",
+        body_html=body,
+        site_url=site_url,
+    )
+
+
 def order_shipped_email(
     *,
     order_number: str,

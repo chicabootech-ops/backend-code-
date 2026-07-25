@@ -76,6 +76,33 @@ class PaymentService:
                 code="payment_not_configured",
             )
 
+        # Idempotency: a repeat submit/retry with the same key reuses the pending
+        # order + Razorpay order instead of creating duplicates.
+        if request.idempotency_key and user_id:
+            existing = await self._orders.find_reusable_pending(
+                user_id=user_id, idempotency_key=request.idempotency_key
+            )
+            if existing is not None:
+                payment = await self._payments.get_by_order(existing.id)
+                if payment and payment.provider_order_id:
+                    ship = existing.shipping_address or {}
+                    return CheckoutResponse(
+                        order_id=existing.id,
+                        order_number=existing.order_number,
+                        grand_total_paise=existing.grand_total_paise,
+                        payment_status=existing.payment_status,
+                        razorpay=RazorpayCheckoutOut(
+                            key_id=self._razorpay.key_id,
+                            razorpay_order_id=payment.provider_order_id,
+                            amount_paise=existing.grand_total_paise,
+                            currency="INR",
+                            description=f"Chic A Boo Order #{existing.order_number}",
+                            prefill_name=ship.get("full_name"),
+                            prefill_email=await self._user_email(user_id) or request.email,
+                            prefill_contact=ship.get("phone"),
+                        ),
+                    )
+
         raw_items = await self._resolve_items(request)
         shipping, billing = await self._resolve_addresses(user_id=user_id, request=request)
 
@@ -104,7 +131,10 @@ class PaymentService:
             billing_address=billing or shipping,
             gstin=(request.gstin or None),
             customer_note=(request.customer_note or None),
-            metadata_={"channel": "web"},
+            metadata_={
+                "channel": "web",
+                **({"idempotency_key": request.idempotency_key} if request.idempotency_key else {}),
+            },
         )
         order = await self._orders.create_order(order)
 
@@ -315,10 +345,13 @@ class PaymentService:
         )
 
     async def _post_payment(self, order: Order) -> None:
-        """After commit: generate the invoice and email the customer (best-effort)."""
+        """After commit: generate the invoice and email it to the customer (best-effort)."""
+        invoice = None
+        pdf_bytes: bytes | None = None
         try:
-            await self._invoice_service.ensure_invoice(order, payment_method="Prepaid")
+            invoice = await self._invoice_service.ensure_invoice(order, payment_method="Prepaid")
             await self._session.commit()
+            pdf_bytes = await self._invoice_service.render_pdf_bytes(order, invoice)
         except Exception:  # noqa: BLE001
             logger.exception("Invoice generation failed for order %s", order.order_number)
             await self._session.rollback()
@@ -328,15 +361,30 @@ class PaymentService:
         to_email = order.guest_email or await self._user_email(order.user_id)
         if not to_email:
             return
+
+        order_label = f"CAB{order.order_number}"
+        total_label = f"Rs. {order.grand_total_paise / 100:,.2f}"
+        track_url = f"{settings.site_url.rstrip('/')}/track-order?order={order.order_number}"
         try:
-            await self._email.send_order_confirmation(
-                to_email=to_email,
-                order_number=f"CAB{order.order_number}",
-                total_label=f"Rs. {order.grand_total_paise / 100:,.2f}",
-                track_url=f"{settings.site_url.rstrip('/')}/track-order?order={order.order_number}",
-            )
+            if invoice is not None and pdf_bytes:
+                await self._email.send_invoice_email(
+                    to_email=to_email,
+                    order_number=order_label,
+                    invoice_number=f"{settings.invoice_prefix}-{invoice.invoice_number}",
+                    total_label=total_label,
+                    pdf_bytes=pdf_bytes,
+                    filename=f"chicaboo-invoice-{order.order_number}.pdf",
+                    track_url=track_url,
+                )
+            else:
+                await self._email.send_order_confirmation(
+                    to_email=to_email,
+                    order_number=order_label,
+                    total_label=total_label,
+                    track_url=track_url,
+                )
         except Exception:  # noqa: BLE001
-            logger.exception("Order confirmation email failed for order %s", order.order_number)
+            logger.exception("Order email failed for order %s", order.order_number)
 
     async def _status_out(self, order: Order, payment: Payment | None) -> PaymentStatusOut:
         invoice = await self._invoices.get_by_order(order.id)

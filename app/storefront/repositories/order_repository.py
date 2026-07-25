@@ -55,6 +55,23 @@ class OrderRepository:
         )
         await self._session.flush()
 
+    async def find_reusable_pending(
+        self, *, user_id: uuid.UUID, idempotency_key: str
+    ) -> Order | None:
+        """Return an existing still-payable order for this idempotency key, if any."""
+        result = await self._session.execute(
+            select(Order)
+            .where(
+                Order.user_id == user_id,
+                Order.status == "pending",
+                Order.payment_status == "pending",
+                Order.metadata_["idempotency_key"].astext == idempotency_key,
+            )
+            .order_by(Order.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_id(
         self, order_id: uuid.UUID, *, user_id: uuid.UUID | None = None
     ) -> Order | None:
