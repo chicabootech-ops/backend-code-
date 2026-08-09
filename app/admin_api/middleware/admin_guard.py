@@ -33,7 +33,15 @@ class AdminGuardMiddleware(BaseHTTPMiddleware):
 
         jwt_manager = getattr(request.app.state, "admin_jwt_manager", None)
         if jwt_manager is None:
-            return await call_next(request)
+            # Fail closed: without a verifier we cannot establish who is calling,
+            # so refuse rather than wave the request through to the routers.
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "Admin authentication is unavailable",
+                    "code": "auth_unavailable",
+                },
+            )
 
         try:
             jwt_manager.decode_token(auth.removeprefix("Bearer ").strip())

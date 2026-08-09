@@ -146,6 +146,11 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() in {"production", "prod"}
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def jwt_private_key_pem(self) -> str:
         return load_pem(self.jwt_private_key, self.jwt_private_key_path)
 

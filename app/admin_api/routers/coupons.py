@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.admin_api.core.security.permissions import CouponWriter
 from app.admin_api.dependencies import CouponAdminServiceDep, CurrentAdmin
 from app.admin_api.services.coupon_admin_service import (
     CouponCreate,
@@ -27,7 +28,7 @@ async def list_coupons(
 
 @router.post("", response_model=CouponOut, status_code=201)
 async def create_coupon(
-    payload: CouponCreate, _admin: CurrentAdmin, service: CouponAdminServiceDep
+    payload: CouponCreate, _admin: CouponWriter, service: CouponAdminServiceDep
 ) -> CouponOut:
     try:
         return await service.create(payload)
@@ -39,7 +40,7 @@ async def create_coupon(
 async def update_coupon(
     coupon_id: uuid.UUID,
     payload: CouponUpdate,
-    _admin: CurrentAdmin,
+    _admin: CouponWriter,
     service: CouponAdminServiceDep,
 ) -> CouponOut:
     try:

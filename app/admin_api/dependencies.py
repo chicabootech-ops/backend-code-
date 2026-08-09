@@ -22,6 +22,7 @@ from app.admin_api.services.product_service import ProductService
 from app.admin_api.services.refund_service import RefundService
 from app.admin_api.services.testimonial_service import TestimonialAdminService
 from app.admin_api.services.user_admin_service import UserAdminService
+from app.identity.services.rate_limit_service import RateLimitService
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -54,10 +55,13 @@ async def get_current_admin(
 
 
 async def get_auth_service(
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     jwt_manager: Annotated[AdminJWTManager, Depends(get_jwt_manager)],
 ) -> AdminAuthService:
-    return AdminAuthService(db, jwt_manager)
+    redis = getattr(request.app.state, "redis_client", None)
+    rate_limit = RateLimitService(redis) if redis is not None else None
+    return AdminAuthService(db, jwt_manager, rate_limit)
 
 
 async def get_category_service(db: Annotated[AsyncSession, Depends(get_db)]) -> CategoryService:

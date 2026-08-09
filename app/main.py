@@ -62,6 +62,7 @@ from app.storefront.routers import (
 from app.admin_api.core.exception_handlers import register_exception_handlers as register_admin_handlers
 from app.admin_api.core.security.jwt import AdminJWTManager
 from app.admin_api.middleware.admin_guard import AdminGuardMiddleware
+from app.admin_api.middleware.security_headers import SecurityHeadersMiddleware
 from app.admin_api.routers import (
     analytics,
     auth as admin_auth,
@@ -131,8 +132,14 @@ async def lifespan(app: FastAPI):
     message_central = MessageCentralClient(settings)
     phone_service = PhoneService(settings, redis_client, rate_limit_service, message_central)
 
+    # An empty HMAC secret means anyone can forge an admin token, so this is a
+    # hard stop in production rather than a warning.
     if not settings.admin_jwt_secret:
-        logger.warning("ADMIN_JWT_SECRET is empty — set it in .env")
+        if settings.is_production:
+            raise RuntimeError("ADMIN_JWT_SECRET must be set in production")
+        logger.warning("ADMIN_JWT_SECRET is empty — set it in .env before deploying")
+    elif len(settings.admin_jwt_secret) < 32 and settings.is_production:
+        raise RuntimeError("ADMIN_JWT_SECRET must be at least 32 characters in production")
     if not message_central.configured:
         logger.warning(
             "Message Central not configured — phone OTP disabled until "
@@ -211,13 +218,27 @@ async def _handle_gateway_error(_request: Request, exc: PaymentGatewayError) -> 
         content={"error": {"code": exc.code, "message": exc.message}},
     )
 
+# `allow_credentials=True` with a wildcard origin makes Starlette echo back
+# whichever Origin asked — any site could then read authenticated responses.
+# Production must name its origins; only local dev falls back to localhost.
+_cors_origins = settings.cors_origin_list
+if not _cors_origins:
+    if settings.is_production:
+        raise RuntimeError(
+            "CORS_ORIGINS must list the storefront and admin origins in production."
+        )
+    _cors_origins = ["http://localhost:3000", "http://localhost:3001"]
+    logger.warning("CORS_ORIGINS not set — defaulting to localhost dev origins")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list or ["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+    max_age=600,
 )
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(AdminGuardMiddleware)
 

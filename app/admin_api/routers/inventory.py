@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.admin_api.core.security.permissions import InventoryWriter
 from app.admin_api.dependencies import CurrentAdmin, InventoryAdminServiceDep
 from app.admin_api.services.inventory_admin_service import (
     InventoryAdjust,
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/admin/inventory", tags=["admin-inventory"])
 async def adjust_inventory(
     variant_id: uuid.UUID,
     payload: InventoryAdjust,
-    admin: CurrentAdmin,
+    admin: InventoryWriter,
     service: InventoryAdminServiceDep,
 ) -> InventoryRowOut:
     try:

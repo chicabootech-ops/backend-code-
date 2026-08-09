@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Query, Request
 
+from app.admin_api.core.security.permissions import UserWriter
 from app.admin_api.dependencies import CurrentAdmin, UserAdminServiceDep
 from app.admin_api.schemas.user import AdminUserDetailOut, AdminUserOut, UserListResponse, UserStatusUpdate
 
@@ -38,7 +39,7 @@ async def get_user(user_id: uuid.UUID, _admin: CurrentAdmin, service: UserAdminS
 async def update_user_status(
     user_id: uuid.UUID,
     payload: UserStatusUpdate,
-    admin: CurrentAdmin,
+    admin: UserWriter,
     service: UserAdminServiceDep,
     request: Request,
 ):
@@ -50,7 +51,7 @@ async def update_user_status(
 @router.patch("/{user_id}/ban", response_model=AdminUserOut)
 async def ban_user(
     user_id: uuid.UUID,
-    admin: CurrentAdmin,
+    admin: UserWriter,
     service: UserAdminServiceDep,
     request: Request,
     reason: str | None = None,
@@ -61,7 +62,7 @@ async def ban_user(
 @router.patch("/{user_id}/suspend", response_model=AdminUserOut)
 async def suspend_user(
     user_id: uuid.UUID,
-    admin: CurrentAdmin,
+    admin: UserWriter,
     service: UserAdminServiceDep,
     request: Request,
     reason: str | None = None,
@@ -74,7 +75,7 @@ async def suspend_user(
 @router.patch("/{user_id}/activate", response_model=AdminUserOut)
 async def activate_user(
     user_id: uuid.UUID,
-    admin: CurrentAdmin,
+    admin: UserWriter,
     service: UserAdminServiceDep,
     request: Request,
 ):

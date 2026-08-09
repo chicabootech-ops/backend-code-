@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Query, Request
 
 from app.admin_api.core.events import catalog_changed
+from app.admin_api.core.security.permissions import CatalogWriter
 from app.admin_api.dependencies import CatalogCacheDep, CurrentAdmin, TestimonialAdminServiceDep
 from app.admin_api.schemas.testimonial import (
     TestimonialCreate,
@@ -44,7 +45,7 @@ async def get_testimonial(
 @router.post("", response_model=TestimonialOut, status_code=201)
 async def create_testimonial(
     payload: TestimonialCreate,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: TestimonialAdminServiceDep,
     cache: CatalogCacheDep,
     request: Request,
@@ -59,7 +60,7 @@ async def create_testimonial(
 async def update_testimonial(
     testimonial_id: uuid.UUID,
     payload: TestimonialUpdate,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: TestimonialAdminServiceDep,
     cache: CatalogCacheDep,
     request: Request,
@@ -75,7 +76,7 @@ async def update_testimonial(
 @router.delete("/{testimonial_id}", status_code=204)
 async def delete_testimonial(
     testimonial_id: uuid.UUID,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: TestimonialAdminServiceDep,
     cache: CatalogCacheDep,
     request: Request,

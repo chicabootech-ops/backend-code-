@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Query, Request
 
 from app.admin_api.core.events import catalog_changed
+from app.admin_api.core.security.permissions import CatalogWriter
 from app.admin_api.dependencies import CatalogCacheDep, CurrentAdmin, ProductServiceDep
 from app.admin_api.schemas.product import ProductCreate, ProductOut, ProductUpdate
 
@@ -42,7 +43,7 @@ async def get_product(product_id: uuid.UUID, _admin: CurrentAdmin, service: Prod
 @router.post("", response_model=ProductOut, status_code=201)
 async def create_product(
     payload: ProductCreate,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: ProductServiceDep,
     cache: CatalogCacheDep,
     request: Request,
@@ -57,7 +58,7 @@ async def create_product(
 async def update_product(
     product_id: uuid.UUID,
     payload: ProductUpdate,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: ProductServiceDep,
     cache: CatalogCacheDep,
     request: Request,
@@ -71,7 +72,7 @@ async def update_product(
 @router.delete("/{product_id}", status_code=204)
 async def delete_product(
     product_id: uuid.UUID,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: ProductServiceDep,
     cache: CatalogCacheDep,
     request: Request,

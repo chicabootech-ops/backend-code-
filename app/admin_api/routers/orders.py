@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query, Request
 
 from pydantic import BaseModel, Field
 
+from app.admin_api.core.security.permissions import OrderWriter, RefundWriter
 from app.admin_api.dependencies import CurrentAdmin, OrderAdminServiceDep, RefundServiceDep
 from app.admin_api.schemas.order import AdminOrderOut, OrderListResponse, OrderStatusUpdate
 
@@ -48,7 +49,7 @@ async def track_order(order_id: uuid.UUID, _admin: CurrentAdmin, service: OrderA
 async def update_order_status(
     order_id: uuid.UUID,
     payload: OrderStatusUpdate,
-    admin: CurrentAdmin,
+    admin: OrderWriter,
     service: OrderAdminServiceDep,
     request: Request,
 ):
@@ -68,7 +69,7 @@ class RefundRequest(BaseModel):
 async def refund_order(
     order_id: uuid.UUID,
     payload: RefundRequest,
-    admin: CurrentAdmin,
+    admin: RefundWriter,
     service: RefundServiceDep,
     request: Request,
 ):

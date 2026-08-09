@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Query, Request
 
 from app.admin_api.core.events import catalog_changed
+from app.admin_api.core.security.permissions import CatalogWriter
 from app.admin_api.dependencies import CatalogCacheDep, CategoryServiceDep, CurrentAdmin
 from app.admin_api.schemas.category import CategoryCreate, CategoryOut, CategoryUpdate
 
@@ -35,7 +36,7 @@ async def get_category(category_id: uuid.UUID, _admin: CurrentAdmin, service: Ca
 @router.post("", response_model=CategoryOut, status_code=201)
 async def create_category(
     payload: CategoryCreate,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: CategoryServiceDep,
     cache: CatalogCacheDep,
     request: Request,
@@ -50,7 +51,7 @@ async def create_category(
 async def update_category(
     category_id: uuid.UUID,
     payload: CategoryUpdate,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: CategoryServiceDep,
     cache: CatalogCacheDep,
     request: Request,
@@ -64,7 +65,7 @@ async def update_category(
 @router.delete("/{category_id}", status_code=204)
 async def delete_category(
     category_id: uuid.UUID,
-    admin: CurrentAdmin,
+    admin: CatalogWriter,
     service: CategoryServiceDep,
     cache: CatalogCacheDep,
     request: Request,
