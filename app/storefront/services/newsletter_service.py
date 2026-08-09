@@ -7,6 +7,8 @@ import secrets
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.events.bus import get_event_bus
+from app.events.types import EventType
 from app.identity.services.email_service import EmailService
 
 
@@ -64,4 +66,5 @@ class NewsletterService:
         )
         if not result.first():
             return {"status": "invalid", "message": "This confirmation link is invalid or expired."}
+        await get_event_bus().publish(EventType.NEWSLETTER_SUBSCRIBED, {})
         return {"status": "confirmed", "message": "Your newsletter subscription is confirmed."}

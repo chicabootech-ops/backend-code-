@@ -54,6 +54,30 @@ class CachedCatalogService:
             model=StorefrontProductDetailOut,
         )
 
+    async def list_by_slugs(self, slugs: list[str]):
+        # Ranking changes constantly; a short TTL keyed on the exact ranking is enough.
+        return await self._cache.get_or_set(
+            f"products:by-slug:{','.join(slugs)}", _LIST_TTL,
+            lambda: self._inner.list_by_slugs(slugs),
+            model=StorefrontProductListResponse,
+        )
+
+    async def list_catalog(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 24,
+        sort: str = "newest",
+        featured_only: bool = False,
+    ):
+        return await self._cache.get_or_set(
+            f"catalog:{page}:{page_size}:{sort}:{int(featured_only)}", _LIST_TTL,
+            lambda: self._inner.list_catalog(
+                page=page, page_size=page_size, sort=sort, featured_only=featured_only
+            ),
+            model=StorefrontProductListResponse,
+        )
+
     async def list_products(
         self,
         *,

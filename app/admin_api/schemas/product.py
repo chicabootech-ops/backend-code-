@@ -26,6 +26,7 @@ class ProductCreate(BaseModel):
     status: str = "draft"
     is_featured: bool = False
     image_url: str | None = None
+    gallery: list[str] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     variant: ProductVariantIn | None = None
 
@@ -40,6 +41,7 @@ class ProductUpdate(BaseModel):
     status: str | None = None
     is_featured: bool | None = None
     image_url: str | None = None
+    gallery: list[str] | None = None
     metadata: dict[str, Any] | None = None
     variant: ProductVariantIn | None = None
 
@@ -64,7 +66,12 @@ class ProductOut(BaseModel):
     brand: str | None = None
     status: str
     is_featured: bool
+    #: Raw stored value (R2 object key or path) — what edit forms round-trip.
+    image_key: str | None = None
+    #: Browsable URL for previews; presigned when the bucket is private.
     image_url: str | None = None
+    gallery: list[str] = Field(default_factory=list)
+    gallery_urls: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     variants: list[ProductVariantOut] = Field(default_factory=list)
     created_at: datetime

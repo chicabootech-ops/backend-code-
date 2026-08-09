@@ -12,6 +12,17 @@ from app.admin_api.repositories.audit_repository import AuditRepository
 from app.admin_api.repositories.category_repository import CategoryRepository
 from app.admin_api.repositories.product_repository import ProductRepository
 from app.admin_api.schemas.product import ProductCreate, ProductOut, ProductUpdate, ProductVariantOut
+from app.storefront.lib.media import resolve_storage_url
+
+
+def _clean_keys(values: list[str] | None) -> list[str]:
+    """De-duplicated, order-preserving list of non-empty image keys."""
+    out: list[str] = []
+    for value in values or []:
+        key = value.strip() if isinstance(value, str) else ""
+        if key and key not in out:
+            out.append(key)
+    return out
 
 
 class ProductService:
@@ -23,11 +34,12 @@ class ProductService:
 
     def _to_out(self, product: Product, variants=None) -> ProductOut:
         meta = product.metadata_ or {}
-        image_url = meta.get("image_url") or meta.get("image_r2_key")
-        if isinstance(image_url, str):
-            image_url = image_url.strip() or None
+        image_key = meta.get("image_url") or meta.get("image_r2_key")
+        if isinstance(image_key, str):
+            image_key = image_key.strip() or None
         else:
-            image_url = None
+            image_key = None
+        gallery = _clean_keys(meta.get("gallery") or meta.get("images"))
         return ProductOut(
             id=product.id,
             name=product.name,
@@ -38,7 +50,10 @@ class ProductService:
             brand=product.brand,
             status=product.status,
             is_featured=product.is_featured,
-            image_url=image_url,
+            image_key=image_key,
+            image_url=resolve_storage_url(image_key),
+            gallery=gallery,
+            gallery_urls=[url for url in (resolve_storage_url(k) for k in gallery) if url],
             metadata=meta,
             variants=[
                 ProductVariantOut(
@@ -100,8 +115,14 @@ class ProductService:
             raise ConflictError(f"Slug '{slug}' already exists")
 
         metadata = dict(payload.metadata or {})
+        gallery = _clean_keys(payload.gallery)
         if payload.image_url is not None:
             metadata["image_url"] = payload.image_url.strip() or None
+        if payload.gallery is not None:
+            metadata["gallery"] = gallery
+        # First uploaded image doubles as the card thumbnail when none was set.
+        if not metadata.get("image_url") and gallery:
+            metadata["image_url"] = gallery[0]
 
         product = await self._repo.create_product(
             {
@@ -193,10 +214,15 @@ class ProductService:
             data["status"] = payload.status
         if payload.is_featured is not None:
             data["is_featured"] = payload.is_featured
-        if payload.metadata is not None or payload.image_url is not None:
+        if payload.metadata is not None or payload.image_url is not None or payload.gallery is not None:
             meta = dict(payload.metadata if payload.metadata is not None else (product.metadata_ or {}))
             if payload.image_url is not None:
                 meta["image_url"] = payload.image_url.strip() or None
+            if payload.gallery is not None:
+                gallery = _clean_keys(payload.gallery)
+                meta["gallery"] = gallery
+                if not meta.get("image_url") and gallery:
+                    meta["image_url"] = gallery[0]
             data["metadata"] = meta
 
         updated = await self._repo.update_product(product_id, data)

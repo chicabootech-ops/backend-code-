@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Query, Request
 
+from app.admin_api.core.events import catalog_changed
 from app.admin_api.dependencies import CatalogCacheDep, CategoryServiceDep, CurrentAdmin
 from app.admin_api.schemas.category import CategoryCreate, CategoryOut, CategoryUpdate
 
@@ -41,6 +42,7 @@ async def create_category(
 ):
     result = await service.create(payload, admin_id=admin.sub, ip_address=_ip(request))
     await cache.bump()
+    await catalog_changed("category", "create", result.id)
     return result
 
 
@@ -55,6 +57,7 @@ async def update_category(
 ):
     result = await service.update(category_id, payload, admin_id=admin.sub, ip_address=_ip(request))
     await cache.bump()
+    await catalog_changed("category", "update", category_id)
     return result
 
 
@@ -68,3 +71,4 @@ async def delete_category(
 ):
     await service.delete(category_id, admin_id=admin.sub, ip_address=_ip(request))
     await cache.bump()
+    await catalog_changed("category", "delete", category_id)

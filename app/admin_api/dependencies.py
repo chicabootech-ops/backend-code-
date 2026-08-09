@@ -19,6 +19,8 @@ from app.admin_api.services.inventory_admin_service import InventoryAdminService
 from app.admin_api.services.invoice_admin_service import InvoiceAdminService
 from app.admin_api.services.order_admin_service import OrderAdminService
 from app.admin_api.services.product_service import ProductService
+from app.admin_api.services.refund_service import RefundService
+from app.admin_api.services.testimonial_service import TestimonialAdminService
 from app.admin_api.services.user_admin_service import UserAdminService
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -88,6 +90,16 @@ async def get_inventory_admin_service(
     return InventoryAdminService(db)
 
 
+async def get_refund_service(db: Annotated[AsyncSession, Depends(get_db)]) -> RefundService:
+    return RefundService(db)
+
+
+async def get_testimonial_admin_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TestimonialAdminService:
+    return TestimonialAdminService(db)
+
+
 def get_catalog_cache(request: Request) -> CatalogCache:
     return CatalogCache(getattr(request.app.state, "redis_client", None))
 
@@ -101,5 +113,9 @@ OrderAdminServiceDep = Annotated[OrderAdminService, Depends(get_order_admin_serv
 InvoiceAdminServiceDep = Annotated[InvoiceAdminService, Depends(get_invoice_admin_service)]
 CouponAdminServiceDep = Annotated[CouponAdminService, Depends(get_coupon_admin_service)]
 InventoryAdminServiceDep = Annotated[InventoryAdminService, Depends(get_inventory_admin_service)]
+RefundServiceDep = Annotated[RefundService, Depends(get_refund_service)]
+TestimonialAdminServiceDep = Annotated[
+    TestimonialAdminService, Depends(get_testimonial_admin_service)
+]
 CatalogCacheDep = Annotated[CatalogCache, Depends(get_catalog_cache)]
 AuthServiceDep = Annotated[AdminAuthService, Depends(get_auth_service)]

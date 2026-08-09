@@ -23,6 +23,7 @@ from app.storefront.services.payment_service import PaymentService
 from app.storefront.services.return_service import ReturnService
 from app.storefront.services.review_service import ReviewService
 from app.storefront.services.search_service import SearchService
+from app.storefront.services.testimonial_service import TestimonialService
 from app.storefront.services.wishlist_service import WishlistService
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -122,6 +123,14 @@ async def get_notification_service(db: DbSession) -> NotificationService:
     return NotificationService(db)
 
 
+async def get_testimonial_service(db: DbSession) -> TestimonialService:
+    return TestimonialService(db)
+
+
+async def get_catalog_cache(request: Request) -> CatalogCache:
+    return CatalogCache(getattr(request.app.state, "redis_client", None))
+
+
 CategoryServiceDep = Annotated[CategoryService, Depends(get_category_service)]
 CatalogServiceDep = Annotated[CachedCatalogService, Depends(get_catalog_service)]
 OrderServiceDep = Annotated[OrderService, Depends(get_order_service)]
@@ -133,3 +142,5 @@ ReviewServiceDep = Annotated[ReviewService, Depends(get_review_service)]
 ReturnServiceDep = Annotated[ReturnService, Depends(get_return_service)]
 NewsletterServiceDep = Annotated[NewsletterService, Depends(get_newsletter_service)]
 NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
+TestimonialServiceDep = Annotated[TestimonialService, Depends(get_testimonial_service)]
+CatalogCacheDep = Annotated[CatalogCache, Depends(get_catalog_cache)]

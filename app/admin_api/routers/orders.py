@@ -4,7 +4,9 @@ import uuid
 
 from fastapi import APIRouter, Query, Request
 
-from app.admin_api.dependencies import CurrentAdmin, OrderAdminServiceDep
+from pydantic import BaseModel, Field
+
+from app.admin_api.dependencies import CurrentAdmin, OrderAdminServiceDep, RefundServiceDep
 from app.admin_api.schemas.order import AdminOrderOut, OrderListResponse, OrderStatusUpdate
 
 router = APIRouter(prefix="/admin/orders", tags=["admin-orders"])
@@ -52,4 +54,29 @@ async def update_order_status(
 ):
     return await service.update_status(
         order_id, payload, admin_id=admin.sub, ip_address=_ip(request)
+    )
+
+
+class RefundRequest(BaseModel):
+    """Omit `amount_paise` to refund whatever is still outstanding."""
+
+    amount_paise: int | None = Field(default=None, gt=0)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/{order_id}/refund")
+async def refund_order(
+    order_id: uuid.UUID,
+    payload: RefundRequest,
+    admin: CurrentAdmin,
+    service: RefundServiceDep,
+    request: Request,
+):
+    """Issue a Razorpay refund against this order's captured payment."""
+    return await service.refund_order(
+        order_id,
+        admin_id=admin.sub,
+        amount_paise=payload.amount_paise,
+        reason=payload.reason,
+        ip_address=_ip(request),
     )

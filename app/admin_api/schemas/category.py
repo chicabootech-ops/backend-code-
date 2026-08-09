@@ -37,6 +37,7 @@ class CategoryOut(BaseModel):
     slug: str
     description: str | None = None
     image_r2_key: str | None = None
+    image_url: str | None = None
     kind: str = "category"
     sort_order: int
     status: str

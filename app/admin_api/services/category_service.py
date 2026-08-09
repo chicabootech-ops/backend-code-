@@ -10,6 +10,7 @@ from app.admin_api.models.commerce import Category
 from app.admin_api.repositories.audit_repository import AuditRepository
 from app.admin_api.repositories.category_repository import CategoryRepository
 from app.admin_api.schemas.category import CategoryCreate, CategoryOut, CategoryUpdate
+from app.storefront.lib.media import resolve_storage_url
 
 
 def _to_out(category: Category, children: list[CategoryOut] | None = None) -> CategoryOut:
@@ -20,6 +21,7 @@ def _to_out(category: Category, children: list[CategoryOut] | None = None) -> Ca
         slug=category.slug,
         description=category.description,
         image_r2_key=category.image_r2_key,
+        image_url=resolve_storage_url(category.image_r2_key),
         kind=getattr(category, "kind", None)
         or ("section" if category.parent_id is None else "category"),
         sort_order=category.sort_order,

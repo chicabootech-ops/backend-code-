@@ -19,6 +19,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.events.bus import get_event_bus
+from app.events.types import EventType
 from app.storefront.lib.razorpay_client import PaymentGatewayError, RazorpayClient
 from app.storefront.models.commerce import Order, OrderItem, OrderTaxLine, Payment
 from app.storefront.repositories.invoice_repository import InvoiceRepository
@@ -249,6 +251,17 @@ class PaymentService:
         )
         await self._session.commit()
 
+        await get_event_bus().publish(
+            EventType.ORDER_CREATED,
+            {
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "total_paise": final_total,
+                "user_id": str(user_id) if user_id else None,
+                "item_count": len(raw_items),
+            },
+        )
+
         return CheckoutResponse(
             order_id=order.id,
             order_number=order.order_number,
@@ -300,6 +313,14 @@ class PaymentService:
                 raw_payload={"reason": "signature_mismatch"},
             )
             await self._session.commit()
+            await get_event_bus().publish(
+                EventType.PAYMENT_FAILED,
+                {
+                    "order_id": str(order.id),
+                    "order_number": order.order_number,
+                    "reason": "signature_verification_failed",
+                },
+            )
             raise CheckoutError(
                 "Payment could not be verified.", status_code=400, code="signature_invalid"
             )
@@ -401,6 +422,16 @@ class PaymentService:
                 order_id=order.id,
                 discount_paise=order.discount_paise,
             )
+        await get_event_bus().publish(
+            EventType.PAYMENT_CAPTURED,
+            {
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "amount_paise": payment.amount_paise,
+                "provider_payment_id": provider_payment_id,
+                "method": _normalise_method(method),
+            },
+        )
 
     async def _post_payment(self, order: Order) -> None:
         """After commit: generate the invoice and email it to the customer (best-effort)."""

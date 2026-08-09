@@ -57,6 +57,16 @@ def product_to_out(
     )
 
 
+def _sort_items(items: list[StorefrontProductOut], sort: str) -> None:
+    """In-place sort shared by the category and catalog-wide listings."""
+    if sort == "price_asc":
+        items.sort(key=lambda i: i.price_paise)
+    elif sort == "price_desc":
+        items.sort(key=lambda i: i.price_paise, reverse=True)
+    elif sort == "name":
+        items.sort(key=lambda i: i.name.lower())
+
+
 class CatalogService:
     def __init__(self, session: AsyncSession) -> None:
         self._categories = CategoryRepository(session)
@@ -219,6 +229,66 @@ class CatalogService:
             ],
         )
 
+    async def list_by_slugs(self, slugs: list[str]) -> StorefrontProductListResponse:
+        """Products in the exact order the slugs were given (trending, recently viewed)."""
+        products = await self._products.list_by_slugs(slugs)
+        if not products:
+            return StorefrontProductListResponse(items=[], total=0, page=1, page_size=len(slugs))
+
+        prices = await self._price_map(products)
+        categories = await self._categories_for(products)
+        rank = {slug: index for index, slug in enumerate(slugs)}
+        products.sort(key=lambda p: rank.get(p.slug, len(slugs)))
+        items = [
+            product_to_out(
+                p,
+                price_paise=prices[p.id][0],
+                compare_at_price_paise=prices[p.id][1],
+                category=categories.get(p.primary_category_id),
+            )
+            for p in products
+        ]
+        return StorefrontProductListResponse(
+            items=items, total=len(items), page=1, page_size=len(items)
+        )
+
+    async def list_catalog(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 24,
+        sort: str = "newest",
+        featured_only: bool = False,
+    ) -> StorefrontProductListResponse:
+        """Every active product, regardless of category."""
+        products, total = await self._products.list_active(
+            page=page, page_size=page_size, featured_only=featured_only
+        )
+        prices = await self._price_map(products)
+        categories = await self._categories_for(products)
+        items = [
+            product_to_out(
+                p,
+                price_paise=prices[p.id][0],
+                compare_at_price_paise=prices[p.id][1],
+                category=categories.get(p.primary_category_id),
+            )
+            for p in products
+        ]
+        _sort_items(items, sort)
+        return StorefrontProductListResponse(
+            items=items, total=total, page=page, page_size=page_size
+        )
+
+    async def _categories_for(self, products: list[Product]) -> dict[uuid.UUID, Category]:
+        """Category lookup for a page of products, one query per distinct category."""
+        out: dict[uuid.UUID, Category] = {}
+        for category_id in {p.primary_category_id for p in products}:
+            category = await self._categories.get_by_id(category_id)
+            if category is not None:
+                out[category_id] = category
+        return out
+
     async def list_products(
         self,
         *,
@@ -230,7 +300,7 @@ class CatalogService:
         max_price_paise: int | None = None,
     ) -> StorefrontProductListResponse:
         if not category_slug:
-            return StorefrontProductListResponse(items=[], total=0, page=page, page_size=page_size)
+            return await self.list_catalog(page=page, page_size=page_size, sort=sort)
 
         category = await self._categories.get_by_slug(category_slug)
         if not category or category.parent_id is None:
@@ -254,12 +324,7 @@ class CatalogService:
             items = [i for i in items if i.price_paise >= min_price_paise]
         if max_price_paise is not None:
             items = [i for i in items if i.price_paise <= max_price_paise]
-        if sort == "price_asc":
-            items.sort(key=lambda i: i.price_paise)
-        elif sort == "price_desc":
-            items.sort(key=lambda i: i.price_paise, reverse=True)
-        elif sort == "name":
-            items.sort(key=lambda i: i.name.lower())
+        _sort_items(items, sort)
         total = len(items)
         start = (page - 1) * page_size
         page_items = items[start : start + page_size]

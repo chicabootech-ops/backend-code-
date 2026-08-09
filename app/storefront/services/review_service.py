@@ -7,6 +7,9 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.events.bus import get_event_bus
+from app.events.types import EventType
+
 
 class ReviewError(Exception):
     def __init__(self, message: str, *, status_code: int = 400) -> None:
@@ -94,4 +97,9 @@ class ReviewService:
                 "body": body,
             },
         )
-        return dict(result.mappings().one())
+        review = dict(result.mappings().one())
+        await get_event_bus().publish(
+            EventType.REVIEW_SUBMITTED,
+            {"slug": slug, "product_id": str(product["id"]), "rating": rating},
+        )
+        return review

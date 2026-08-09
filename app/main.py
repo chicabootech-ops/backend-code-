@@ -15,6 +15,9 @@ from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutErr
 
 from app.config import settings
 from app.db.session import create_engine, create_session_factory
+from app.events.bus import EventBus, set_event_bus
+from app.events.worker import EventWorker
+from app.storefront.lib.catalog_cache import CatalogCache
 
 from app.identity.core.exception_handlers import register_exception_handlers as register_identity_handlers
 from app.identity.core.redis.client import RedisClient
@@ -52,6 +55,7 @@ from app.storefront.routers import (
     reviews,
     search,
     sections,
+    testimonials,
     wishlist,
 )
 
@@ -66,8 +70,10 @@ from app.admin_api.routers import (
     inventory,
     invoices as admin_invoices,
     maintenance as admin_maintenance,
+    media as admin_media,
     orders as admin_orders,
     products as admin_products,
+    testimonials as admin_testimonials,
     users as admin_users,
 )
 
@@ -150,9 +156,17 @@ async def lifespan(app: FastAPI):
     app.state.phone_service = phone_service
     app.state.email_service = email_service
 
+    event_bus = EventBus(redis_raw)
+    set_event_bus(event_bus)
+    app.state.event_bus = event_bus
+    event_worker = EventWorker(event_bus, CatalogCache(redis_client))
+    await event_worker.start()
+    app.state.event_worker = event_worker
+
     logger.info("Chic A Boo API started (env=%s)", settings.app_env)
     yield
 
+    await event_worker.stop()
     await redis_client.close()
     await engine.dispose()
     logger.info("Chic A Boo API shutdown complete")
@@ -230,6 +244,7 @@ app.include_router(reviews.router)
 app.include_router(returns.router)
 app.include_router(newsletter.router)
 app.include_router(notifications.router)
+app.include_router(testimonials.router)
 
 # Admin
 app.include_router(admin_auth.router)
@@ -239,6 +254,8 @@ app.include_router(admin_users.router)
 app.include_router(admin_orders.router)
 app.include_router(admin_invoices.router)
 app.include_router(admin_maintenance.router)
+app.include_router(admin_media.router)
+app.include_router(admin_testimonials.router)
 app.include_router(inventory.router)
 app.include_router(analytics.router)
 app.include_router(coupons.router)

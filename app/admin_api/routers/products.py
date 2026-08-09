@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Query, Request
 
+from app.admin_api.core.events import catalog_changed
 from app.admin_api.dependencies import CatalogCacheDep, CurrentAdmin, ProductServiceDep
 from app.admin_api.schemas.product import ProductCreate, ProductOut, ProductUpdate
 
@@ -48,6 +49,7 @@ async def create_product(
 ):
     result = await service.create(payload, admin_id=admin.sub, ip_address=_ip(request))
     await cache.bump()
+    await catalog_changed("product", "create", result.id)
     return result
 
 
@@ -62,6 +64,7 @@ async def update_product(
 ):
     result = await service.update(product_id, payload, admin_id=admin.sub, ip_address=_ip(request))
     await cache.bump()
+    await catalog_changed("product", "update", product_id)
     return result
 
 
@@ -75,3 +78,4 @@ async def delete_product(
 ):
     await service.delete(product_id, admin_id=admin.sub, ip_address=_ip(request))
     await cache.bump()
+    await catalog_changed("product", "delete", product_id)
