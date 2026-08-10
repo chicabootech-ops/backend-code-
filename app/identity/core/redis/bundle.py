@@ -188,12 +188,15 @@ def _encode(op: Op, key_index: int) -> dict[str, object]:
             return {"k": key_index, "f": op.field, "o": "del"}
 
 
-def _decode(op: Op, entry: dict[str, object]) -> CounterResult | str | None:
+def _decode(op: Op, entry: object) -> CounterResult | str | None:
+    # An op with nothing to report returns an empty Lua table, which cjson
+    # renders as `[]` rather than `{}` — so anything not a dict means "empty".
+    fields: dict[str, object] = entry if isinstance(entry, dict) else {}
     match op:
         case Increment():
-            return CounterResult(count=int(entry.get("c", 0)), allowed=bool(entry.get("a", 0)))
+            return CounterResult(count=int(fields.get("c", 0)), allowed=bool(fields.get("a", 0)))
         case ReadValue():
-            value = entry.get("v")
+            value = fields.get("v")
             return str(value) if value is not None else None
         case _:
             return None
