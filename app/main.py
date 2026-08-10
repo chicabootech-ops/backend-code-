@@ -19,6 +19,8 @@ from app.db.session import create_engine, create_session_factory
 from app.events.bus import EventBus, set_event_bus
 from app.events.worker import EventWorker
 from app.storefront.lib.catalog_cache import CatalogCache
+from app.storefront.lib.razorpay_client import RazorpayClient
+from app.storefront.workers.reconciliation_worker import ReconciliationWorker
 
 from app.identity.core.exception_handlers import register_exception_handlers as register_identity_handlers
 from app.identity.core.redis.client import RedisClient
@@ -173,10 +175,20 @@ async def lifespan(app: FastAPI):
     await event_worker.start()
     app.state.event_worker = event_worker
 
+    # Resolves payments whose webhook or callback never arrived. Without this a
+    # debited customer waits on a human noticing.
+    reconciliation_worker = ReconciliationWorker(
+        session_factory, RazorpayClient(settings), email_service=email_service
+    )
+    await reconciliation_worker.start()
+    app.state.reconciliation_worker = reconciliation_worker
+
     logger.info("Chic A Boo API started (env=%s)", settings.app_env)
     yield
 
     await event_worker.stop()
+    await reconciliation_worker.stop()
+    await RazorpayClient.aclose()
     await redis_client.close()
     await engine.dispose()
     logger.info("Chic A Boo API shutdown complete")

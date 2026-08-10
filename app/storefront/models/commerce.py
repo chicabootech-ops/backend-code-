@@ -10,7 +10,16 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Text, func, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -136,6 +145,17 @@ class Payment(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, default="created")
     method: Mapped[str | None] = mapped_column(Text)
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    #: Provider machine-readable code, e.g. 'payment_risk_check_failed'.
+    failure_code: Mapped[str | None] = mapped_column(Text)
+    #: Last time this attempt was confirmed server-side (signature or fetch).
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Reconciliation bookkeeping — see ReconciliationService.
+    reconcile_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_reconcile_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    needs_admin_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    admin_review_reason: Mapped[str | None] = mapped_column(Text)
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -177,4 +197,63 @@ class Invoice(Base):
     pdf_r2_key: Mapped[str | None] = mapped_column(Text)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WebhookEvent(Base):
+    """One provider webhook delivery.
+
+    Rows are written *before* the event is applied, so a delivery that crashes
+    mid-processing still leaves a trace. The unique index on
+    ``(provider, provider_event_id)`` is what makes processing idempotent: a
+    redelivery loses the insert race and is skipped.
+    """
+
+    __tablename__ = "webhook_events"
+    __table_args__ = {"schema": "commerce"}
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False, default="razorpay")
+    provider_event_id: Mapped[str | None] = mapped_column(Text)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    signature_valid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    processing_status: Mapped[str] = mapped_column(Text, nullable=False, default="received")
+    payment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.payments.id")
+    )
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.orders.id")
+    )
+    provider_order_id: Mapped[str | None] = mapped_column(Text)
+    provider_payment_id: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class NotificationLog(Base):
+    """Send-exactly-once guard for order notifications.
+
+    A partial unique index on ``(order_id, kind, channel) WHERE status = 'sent'``
+    means a duplicate webhook cannot produce a second confirmation email, while a
+    failed send leaves the slot free to retry.
+    """
+
+    __tablename__ = "notification_log"
+    __table_args__ = {"schema": "commerce"}
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("commerce.orders.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str] = mapped_column(Text, nullable=False, default="email")
+    recipient: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="sent")
+    error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

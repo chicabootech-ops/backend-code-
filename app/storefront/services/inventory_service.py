@@ -94,7 +94,14 @@ class InventoryService:
             raise OutOfStockError(unavailable)
 
     async def commit(self, order_id: uuid.UUID) -> None:
-        """Convert active reservations to a real stock deduction + movement ledger."""
+        """Convert active reservations to a real stock deduction + movement ledger.
+
+        ``FOR UPDATE`` is load-bearing, not defensive: a webhook and a browser
+        callback can settle the same order concurrently, and without the lock
+        both transactions read the same rows as 'active' and both deduct — the
+        customer's stock goes down twice for one sale. The lock makes the second
+        caller wait and then find nothing left to commit.
+        """
         reservations = (
             await self._session.execute(
                 text(
@@ -102,6 +109,7 @@ class InventoryService:
                     SELECT id, warehouse_id, product_variant_id, quantity
                     FROM commerce.stock_reservations
                     WHERE order_id = :o AND status = 'active'
+                    FOR UPDATE
                     """
                 ),
                 {"o": str(order_id)},
@@ -148,7 +156,11 @@ class InventoryService:
             )
 
     async def release(self, order_id: uuid.UUID) -> None:
-        """Release active reservations (order cancelled or payment failed)."""
+        """Release active reservations (order cancelled or payment failed).
+
+        Locked for the same reason as :meth:`commit` — a release racing a commit
+        must not both act on one reservation.
+        """
         reservations = (
             await self._session.execute(
                 text(
@@ -156,6 +168,7 @@ class InventoryService:
                     SELECT id, warehouse_id, product_variant_id, quantity
                     FROM commerce.stock_reservations
                     WHERE order_id = :o AND status = 'active'
+                    FOR UPDATE
                     """
                 ),
                 {"o": str(order_id)},
