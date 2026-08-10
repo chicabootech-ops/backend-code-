@@ -27,12 +27,17 @@ from app.storefront.repositories.invoice_repository import InvoiceRepository
 from app.storefront.repositories.order_repository import OrderRepository
 from app.storefront.repositories.payment_repository import PaymentRepository
 from app.storefront.repositories.product_repository import ProductRepository
-from app.storefront.schemas.order import CheckoutRequest
+from app.storefront.schemas.order import CheckoutItemIn, CheckoutRequest
 from app.storefront.schemas.payment import (
     CheckoutResponse,
     PaymentStatusOut,
     RazorpayCheckoutOut,
     VerifyPaymentRequest,
+)
+from app.storefront.services.bouquet_service import (
+    BASE_PRODUCT_SQL as BASE_BOUQUET_PRODUCT_SQL,
+    BouquetError,
+    BouquetService,
 )
 from app.storefront.services.coupon_service import CouponError, CouponService
 from app.storefront.services.inventory_service import InventoryService, OutOfStockError
@@ -184,6 +189,7 @@ class PaymentService:
                     line_total_paise=p.line_gross_paise,
                     hsn_code=p.hsn_code,
                     tax_rate_bps=p.tax_rate_bps or None,
+                    metadata_=p.metadata,
                 )
                 for p in priced.items
             ]
@@ -491,6 +497,10 @@ class PaymentService:
     async def _resolve_items(self, request: CheckoutRequest) -> list[dict]:
         raw_items: list[dict] = []
         for item in request.items:
+            if item.custom_bouquet is not None:
+                raw_items.append(await self._resolve_custom_bouquet(item))
+                continue
+
             variant = None
             product = None
             if item.variant_id:
@@ -528,6 +538,46 @@ class PaymentService:
                 }
             )
         return raw_items
+
+    async def _resolve_custom_bouquet(self, item: CheckoutItemIn) -> dict:
+        """Re-price a made-to-order bouquet from the live option catalogue.
+
+        The browser only ever sends which options were picked, so a tampered
+        request can't change what the customer is charged — and a bouquet
+        configured before an option was retired or repriced fails or repricess
+        here rather than shipping at a stale price.
+        """
+        base = (
+            await self._session.execute(BASE_BOUQUET_PRODUCT_SQL)
+        ).mappings().first()
+        if base is None:
+            raise CheckoutError(
+                "Custom bouquets aren't available right now.",
+                status_code=503,
+                code="builder_unavailable",
+            )
+
+        try:
+            quote = await BouquetService(self._session).quote(item.custom_bouquet)
+        except BouquetError as exc:
+            raise CheckoutError(exc.message, status_code=exc.status_code, code=exc.code) from exc
+
+        meta = base["metadata"] or {}
+        tax_rate = meta.get("tax_rate_bps")
+        return {
+            "product_variant_id": str(base["variant_id"]),
+            "product_id": str(base["id"]),
+            "sku": base["sku"],
+            "product_name": base["name"],
+            # The summary rides on the line so the order, invoice and admin
+            # panel all show what was actually ordered.
+            "variant_title": quote.summary[:200],
+            "quantity": item.quantity,
+            "unit_price_paise": quote.total_paise,
+            "tax_rate_bps": int(tax_rate) if tax_rate is not None else settings.default_gst_rate_bps,
+            "hsn_code": meta.get("hsn_code"),
+            "metadata": {"custom_bouquet": quote.model_dump(mode="json")},
+        }
 
     async def _resolve_addresses(
         self, *, user_id: uuid.UUID | None, request: CheckoutRequest

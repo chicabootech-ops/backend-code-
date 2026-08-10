@@ -44,6 +44,7 @@ from app.identity.services.rate_limit_service import RateLimitService
 from app.identity.services.token_service import TokenService
 
 from app.storefront.routers import (
+    bouquet,
     cart,
     categories,
     newsletter,
@@ -66,6 +67,7 @@ from app.admin_api.middleware.security_headers import SecurityHeadersMiddleware
 from app.admin_api.routers import (
     analytics,
     auth as admin_auth,
+    bouquet_options as admin_bouquet_options,
     categories as admin_categories,
     coupons,
     inventory,
@@ -266,6 +268,7 @@ app.include_router(returns.router)
 app.include_router(newsletter.router)
 app.include_router(notifications.router)
 app.include_router(testimonials.router)
+app.include_router(bouquet.router)
 
 # Admin
 app.include_router(admin_auth.router)
@@ -277,6 +280,7 @@ app.include_router(admin_invoices.router)
 app.include_router(admin_maintenance.router)
 app.include_router(admin_media.router)
 app.include_router(admin_testimonials.router)
+app.include_router(admin_bouquet_options.router)
 app.include_router(inventory.router)
 app.include_router(analytics.router)
 app.include_router(coupons.router)

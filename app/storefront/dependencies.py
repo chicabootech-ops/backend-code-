@@ -12,6 +12,7 @@ from app.config import settings
 from app.storefront.db.session import get_session
 from app.storefront.lib.catalog_cache import CatalogCache
 from app.storefront.lib.razorpay_client import RazorpayClient
+from app.storefront.services.bouquet_service import BouquetService
 from app.storefront.services.cart_service import CartService
 from app.storefront.services.cached_catalog_service import CachedCatalogService
 from app.storefront.services.catalog_service import CatalogService
@@ -123,6 +124,10 @@ async def get_notification_service(db: DbSession) -> NotificationService:
     return NotificationService(db)
 
 
+async def get_bouquet_service(db: DbSession) -> BouquetService:
+    return BouquetService(db)
+
+
 async def get_testimonial_service(db: DbSession) -> TestimonialService:
     return TestimonialService(db)
 
@@ -142,5 +147,6 @@ ReviewServiceDep = Annotated[ReviewService, Depends(get_review_service)]
 ReturnServiceDep = Annotated[ReturnService, Depends(get_return_service)]
 NewsletterServiceDep = Annotated[NewsletterService, Depends(get_newsletter_service)]
 NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
+BouquetServiceDep = Annotated[BouquetService, Depends(get_bouquet_service)]
 TestimonialServiceDep = Annotated[TestimonialService, Depends(get_testimonial_service)]
 CatalogCacheDep = Annotated[CatalogCache, Depends(get_catalog_cache)]

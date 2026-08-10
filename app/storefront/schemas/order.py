@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.storefront.schemas.bouquet import BouquetConfigIn
+
 
 class CheckoutItemIn(BaseModel):
     """A line the customer wants to buy. Identify by variant, product, or slug."""
@@ -14,6 +16,9 @@ class CheckoutItemIn(BaseModel):
     product_id: UUID | None = None
     slug: str | None = None
     quantity: int = Field(default=1, ge=1, le=100)
+    #: Set for a made-to-order bouquet. The server resolves the base product and
+    #: prices the configuration itself — no price ever comes from the client.
+    custom_bouquet: BouquetConfigIn | None = None
 
     @field_validator("quantity")
     @classmethod

@@ -13,6 +13,7 @@ from app.admin_api.core.security.jwt import AdminJWTManager, AdminTokenPayload
 from app.admin_api.db.session import get_session
 from app.storefront.lib.catalog_cache import CatalogCache
 from app.admin_api.services.auth_service import AdminAuthService
+from app.admin_api.services.bouquet_admin_service import BouquetAdminService
 from app.admin_api.services.category_service import CategoryService
 from app.admin_api.services.coupon_admin_service import CouponAdminService
 from app.admin_api.services.inventory_admin_service import InventoryAdminService
@@ -94,6 +95,12 @@ async def get_inventory_admin_service(
     return InventoryAdminService(db)
 
 
+async def get_bouquet_admin_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> BouquetAdminService:
+    return BouquetAdminService(db)
+
+
 async def get_refund_service(db: Annotated[AsyncSession, Depends(get_db)]) -> RefundService:
     return RefundService(db)
 
@@ -117,6 +124,7 @@ OrderAdminServiceDep = Annotated[OrderAdminService, Depends(get_order_admin_serv
 InvoiceAdminServiceDep = Annotated[InvoiceAdminService, Depends(get_invoice_admin_service)]
 CouponAdminServiceDep = Annotated[CouponAdminService, Depends(get_coupon_admin_service)]
 InventoryAdminServiceDep = Annotated[InventoryAdminService, Depends(get_inventory_admin_service)]
+BouquetAdminServiceDep = Annotated[BouquetAdminService, Depends(get_bouquet_admin_service)]
 RefundServiceDep = Annotated[RefundService, Depends(get_refund_service)]
 TestimonialAdminServiceDep = Annotated[
     TestimonialAdminService, Depends(get_testimonial_admin_service)

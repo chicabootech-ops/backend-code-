@@ -30,6 +30,9 @@ class PricedItem:
     line_gross_paise: int  # unit_price * quantity (inclusive)
     taxable_paise: int  # net value before tax
     tax_paise: int  # GST portion within the gross
+    #: Line-level snapshot (e.g. a custom bouquet configuration) carried through
+    #: to order_items.metadata so the order records what was actually ordered.
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -101,6 +104,7 @@ def price_order(
                 line_gross_paise=gross,
                 taxable_paise=taxable,
                 tax_paise=tax,
+                metadata=it.get("metadata") or {},
             )
         )
 
