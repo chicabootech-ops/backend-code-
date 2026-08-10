@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -11,12 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.identity.core.exceptions import AppError, ForbiddenError, ValidationError
-from app.identity.core.redis.client import RedisClient
+from app.identity.core.redis.bundle import DeleteValue, ReadValue, WriteValue
+from app.identity.core.redis.client import (
+    RedisClient,
+    RedisUnavailableError,
+    required,
+    unavailable_ok,
+)
+from app.identity.core.redis.keys import PHONE_VERIFY_FIELD, bundle_user_key
 from app.identity.core.validation import validate_phone
 from app.identity.integrations.message_central import MessageCentralClient
 from app.identity.repositories.user_repository import UserRepository
 from app.identity.schemas.common import MessageResponse
-from app.identity.services.rate_limit_service import RateLimitService
+from app.identity.services.rate_limit_service import RateLimitService, by_user
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +66,15 @@ class PhoneService:
                 status_code=503,
             )
 
-        await self._rate_limit.check(
-            "phone_send_otp",
-            str(user_id),
-            limit=self._settings.rate_limit_phone_otp,
-            window_seconds=900,
+        await self._rate_limit.check_rules(
+            [
+                by_user(
+                    "phone_send_otp",
+                    str(user_id),
+                    limit=self._settings.rate_limit_phone_otp,
+                    window_seconds=900,
+                )
+            ]
         )
 
         users = UserRepository(session)
@@ -98,13 +110,18 @@ class PhoneService:
                 status_code=503,
             ) from exc
 
-        # Store verification id for validate step
-        key = f"phone_verify:{user_id}"
+        # Store verification id for the validate step. Unlike the email OTP this
+        # has no database mirror — Message Central holds the code and we only
+        # keep the handle — so a Redis failure has to surface, not be swallowed.
         ttl = max(30, int(result.timeout_seconds or self._settings.otp_ttl_seconds))
-        await self._redis.raw.setex(
-            key,
-            ttl,
-            f"{result.verification_id}|{national}",
+        await self._phone_session_write(
+            user_id,
+            WriteValue(
+                key=bundle_user_key(str(user_id)),
+                field=PHONE_VERIFY_FIELD,
+                value=f"{result.verification_id}|{national}",
+                ttl_seconds=ttl,
+            ),
         )
 
         return MessageResponse(message="OTP sent to your phone number.")
@@ -123,21 +140,24 @@ class PhoneService:
                 status_code=503,
             )
 
-        await self._rate_limit.check(
-            "phone_verify_otp",
-            str(user_id),
-            limit=self._settings.rate_limit_phone_otp,
-            window_seconds=900,
+        await self._rate_limit.check_rules(
+            [
+                by_user(
+                    "phone_verify_otp",
+                    str(user_id),
+                    limit=self._settings.rate_limit_phone_otp,
+                    window_seconds=900,
+                )
+            ]
         )
 
-        raw = await self._redis.raw.get(f"phone_verify:{user_id}")
-        if not raw:
+        stored = await self._phone_session_read(user_id)
+        if not stored:
             raise ForbiddenError(
                 "OTP expired or not requested. Please send a new code.",
                 code="otp_expired",
             )
-        payload = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
-        verification_id, _, national = payload.partition("|")
+        verification_id, _, national = stored.partition("|")
         if not verification_id:
             raise ForbiddenError("OTP session invalid. Please send a new code.", code="otp_invalid")
 
@@ -154,6 +174,44 @@ class PhoneService:
         user.phone_verified = True
         user.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await session.flush()
-        await self._redis.raw.delete(f"phone_verify:{user_id}")
+        await unavailable_ok(
+            self._redis.bundle(
+                [DeleteValue(key=bundle_user_key(str(user_id)), field=PHONE_VERIFY_FIELD)],
+                now=int(time.time()),
+            ),
+            default=[],
+            what="phone OTP session delete",
+        )
 
         return MessageResponse(message="Phone number verified successfully.")
+
+    async def _phone_session_write(self, user_id: uuid.UUID, op: WriteValue) -> None:
+        try:
+            await required(
+                self._redis.bundle([op], now=int(time.time())),
+                what="phone OTP session write",
+            )
+        except RedisUnavailableError as exc:
+            raise AppError(
+                "Phone verification is temporarily unavailable. Please try again.",
+                code="otp_store_unavailable",
+                status_code=503,
+            ) from exc
+
+    async def _phone_session_read(self, user_id: uuid.UUID) -> str | None:
+        try:
+            results = await required(
+                self._redis.bundle(
+                    [ReadValue(key=bundle_user_key(str(user_id)), field=PHONE_VERIFY_FIELD)],
+                    now=int(time.time()),
+                ),
+                what="phone OTP session read",
+            )
+        except RedisUnavailableError as exc:
+            raise AppError(
+                "Phone verification is temporarily unavailable. Please try again.",
+                code="otp_store_unavailable",
+                status_code=503,
+            ) from exc
+        value = results[0] if results else None
+        return value if isinstance(value, str) else None

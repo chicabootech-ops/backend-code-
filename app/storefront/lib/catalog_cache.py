@@ -45,9 +45,10 @@ class CatalogCache:
             return await producer()
         key = None
         try:
-            ver = await self._redis.get_int(VERSION_KEY)
+            # One command fetches the version and the payload stored under it;
+            # reading them separately doubled the billed commands per cache hit.
+            ver, cached = await self._redis.catalog_read(VERSION_KEY, name)
             key = f"catalog:{ver}:{name}"
-            cached = await self._redis.cache_get(key)
             if cached is not None:
                 payload = json.loads(cached)
                 return model.model_validate(payload) if model is not None else payload

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -286,6 +287,15 @@ app.include_router(analytics.router)
 app.include_router(coupons.router)
 
 
+def _redis_target(url: str) -> str:
+    """`scheme://host:port` with any credentials removed."""
+    try:
+        parsed = urlsplit(url)
+        return f"{parsed.scheme}://{parsed.hostname or '?'}:{parsed.port or '?'}"
+    except ValueError:
+        return "unparseable"
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "chicaboo-api"}
@@ -311,6 +321,10 @@ async def health_ready(request: Request):
     except Exception as exc:  # noqa: BLE001
         ok = False
         checks["redis"] = f"error:{type(exc).__name__}"
+        # Which host it failed against is the difference between "REDIS_URL was
+        # never set on the host" and "the real Redis is down"; credentials are
+        # stripped so this stays safe to expose.
+        checks["redis_target"] = _redis_target(settings.redis_url)
 
     return JSONResponse(
         status_code=200 if ok else 503,

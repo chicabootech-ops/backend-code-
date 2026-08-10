@@ -17,6 +17,7 @@ from app.identity.schemas.common import ClientContext
 from app.identity.services.account_service import AccountService
 from app.identity.services.auth_service import AuthService
 from app.identity.services.avatar_service import AvatarService
+from app.identity.core.redis.client import is_token_revoked
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -70,7 +71,7 @@ async def get_current_user_id(
 
     payload = jwt_manager.decode_token(credentials.credentials, expected_type="access")
     redis = request.app.state.redis_client
-    if await redis.is_access_token_blacklisted(payload.jti):
+    if await is_token_revoked(redis, payload.jti):
         raise UnauthorizedError("Token has been revoked", code="token_revoked")
 
     return uuid.UUID(payload.sub)

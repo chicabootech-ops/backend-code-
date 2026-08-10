@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.identity.core.exceptions import UnauthorizedError
-from app.identity.core.redis.client import RedisClient
+from app.identity.core.redis.client import RedisClient, unavailable_ok
 from app.identity.core.security.jwt import JWTManager
 from app.identity.models import RefreshToken, User
 from app.identity.repositories.refresh_token_repository import RefreshTokenRepository
@@ -56,8 +56,6 @@ class TokenService:
     ) -> None:
         session.add(refresh_row)
         await session.flush()
-        ttl = self._settings.jwt_refresh_ttl_seconds
-        await self._redis.cache_refresh_session(refresh_row.token_jti, str(refresh_row.user_id), ttl)
 
     async def rotate_refresh_token(
         self,
@@ -84,7 +82,6 @@ class TokenService:
             raise UnauthorizedError("Account not active", code="account_inactive")
 
         await repo.revoke(stored)
-        await self._redis.delete_refresh_session(stored.token_jti)
 
         tokens, new_plain, new_row = self.issue_tokens(user.id)
         await self.persist_refresh_token(session, new_row)
@@ -98,12 +95,18 @@ class TokenService:
         stored = await repo.get_by_jti(refresh_jti)
         if stored and not stored.revoked:
             await repo.revoke(stored)
-            await self._redis.delete_refresh_session(stored.token_jti)
 
     async def blacklist_access_token(self, access_token: str) -> None:
         payload = self._jwt.decode_token(access_token, expected_type="access")
         ttl = payload.exp - int(datetime.now(UTC).timestamp())
-        await self._redis.blacklist_access_token(payload.jti, max(ttl, 0))
+        # A failed blacklist write must not fail the logout: the refresh token is
+        # revoked in Postgres either way, so the session cannot be extended past
+        # this access token's remaining TTL.
+        await unavailable_ok(
+            self._redis.blacklist_access_token(payload.jti, max(ttl, 0)),
+            default=None,
+            what="access token blacklist write",
+        )
 
     @staticmethod
     def _parse_refresh_jti(refresh_plain: str) -> str:

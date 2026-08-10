@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError as PydanticValidationError
 
 from app.identity.core.exceptions import AppError
+from app.identity.core.redis.client import RedisUnavailableError
 from app.identity.schemas.common import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,19 @@ def register_exception_handlers(app: FastAPI) -> None:
                 error="Validation failed",
                 code="validation_error",
                 detail=str(exc.errors()),
+            ).model_dump(),
+        )
+
+    @app.exception_handler(RedisUnavailableError)
+    async def redis_unavailable_handler(
+        _request: Request, exc: RedisUnavailableError
+    ) -> JSONResponse:
+        """Backstop: a cache outage is a 503 the client can retry, never a 500."""
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                error="Service temporarily unavailable. Please try again.",
+                code="cache_unavailable",
             ).model_dump(),
         )
 

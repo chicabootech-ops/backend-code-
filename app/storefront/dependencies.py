@@ -26,6 +26,7 @@ from app.storefront.services.review_service import ReviewService
 from app.storefront.services.search_service import SearchService
 from app.storefront.services.testimonial_service import TestimonialService
 from app.storefront.services.wishlist_service import WishlistService
+from app.identity.core.redis.client import is_token_revoked
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -52,7 +53,7 @@ async def get_current_user_id(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
     redis = request.app.state.redis_client
-    if await redis.is_access_token_blacklisted(payload.jti):
+    if await is_token_revoked(redis, payload.jti):
         raise HTTPException(status_code=401, detail="Token has been revoked")
     return uuid.UUID(payload.sub)
 

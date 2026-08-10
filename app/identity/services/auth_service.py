@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -16,7 +17,9 @@ from app.identity.core.exceptions import (
     ValidationError,
 )
 from app.identity.core.security.jwt import JWTManager
-from app.identity.core.redis.client import RedisClient
+from app.identity.core.redis.bundle import DeleteValue, ReadValue, WriteValue
+from app.identity.core.redis.client import RedisClient, is_token_revoked, unavailable_ok
+from app.identity.core.redis.keys import bundle_email_key, otp_field
 from app.identity.core.security.password import hash_otp, hash_password, verify_otp, verify_password
 from app.identity.core.security.tokens import fingerprint_token
 from app.identity.repositories.audit_repository import (
@@ -40,7 +43,7 @@ from app.identity.schemas.auth import (
 )
 from app.identity.schemas.common import ClientContext, MessageResponse
 from app.identity.services.email_service import EmailService
-from app.identity.services.rate_limit_service import RateLimitService
+from app.identity.services.rate_limit_service import RateLimitService, by_email, by_ip
 from app.identity.services.token_service import TokenService
 
 
@@ -67,11 +70,12 @@ class AuthService:
         body: RegisterRequest,
         ctx: ClientContext,
     ) -> MessageResponse:
-        await self._rate_limit.check(
-            "register",
-            ctx.ip_address or body.email,
-            limit=self._settings.rate_limit_register,
-            window_seconds=3600,
+        await self._rate_limit.check_rules(
+            [
+                by_ip("register", ctx.ip_address, limit=self._settings.rate_limit_register, window_seconds=3600)
+                if ctx.ip_address
+                else by_email("register", body.email, limit=self._settings.rate_limit_register, window_seconds=3600)
+            ]
         )
 
         if not body.accept_terms:
@@ -123,11 +127,15 @@ class AuthService:
         body: VerifyEmailRequest,
         ctx: ClientContext,
     ) -> MessageResponse:
-        await self._rate_limit.check(
-            "verify_email",
-            normalize_email(body.email),
-            limit=self._settings.rate_limit_verify_email,
-            window_seconds=900,
+        await self._rate_limit.check_rules(
+            [
+                by_email(
+                    "verify_email",
+                    body.email,
+                    limit=self._settings.rate_limit_verify_email,
+                    window_seconds=900,
+                )
+            ]
         )
 
         email_norm = normalize_email(body.email)
@@ -162,11 +170,15 @@ class AuthService:
         body: ResendVerificationRequest,
         ctx: ClientContext,
     ) -> MessageResponse:
-        await self._rate_limit.check(
-            "resend_verification",
-            normalize_email(body.email),
-            limit=self._settings.rate_limit_resend_verification,
-            window_seconds=900,
+        await self._rate_limit.check_rules(
+            [
+                by_email(
+                    "resend_verification",
+                    body.email,
+                    limit=self._settings.rate_limit_resend_verification,
+                    window_seconds=900,
+                )
+            ]
         )
 
         email_norm = normalize_email(body.email)
@@ -197,11 +209,15 @@ class AuthService:
         body: LoginRequest,
         ctx: ClientContext,
     ) -> TokenResponse:
-        await self._rate_limit.check(
-            "login",
-            ctx.ip_address or "unknown",
-            limit=self._settings.rate_limit_login,
-            window_seconds=60,
+        await self._rate_limit.check_rules(
+            [
+                by_ip(
+                    "login",
+                    ctx.ip_address or "unknown",
+                    limit=self._settings.rate_limit_login,
+                    window_seconds=60,
+                )
+            ]
         )
 
         email_norm = normalize_email(body.email)
@@ -312,11 +328,15 @@ class AuthService:
         refresh_token: str,
         ctx: ClientContext,
     ) -> TokenResponse:
-        await self._rate_limit.check(
-            "refresh",
-            ctx.ip_address or "unknown",
-            limit=self._settings.rate_limit_refresh,
-            window_seconds=60,
+        await self._rate_limit.check_rules(
+            [
+                by_ip(
+                    "refresh",
+                    ctx.ip_address or "unknown",
+                    limit=self._settings.rate_limit_refresh,
+                    window_seconds=60,
+                )
+            ]
         )
         tokens, _user = await self._tokens.rotate_refresh_token(session, refresh_token)
         return tokens
@@ -355,11 +375,15 @@ class AuthService:
         body: ForgotPasswordRequest,
         ctx: ClientContext,
     ) -> MessageResponse:
-        await self._rate_limit.check(
-            "forgot_password",
-            normalize_email(body.email),
-            limit=self._settings.rate_limit_forgot_password,
-            window_seconds=3600,
+        await self._rate_limit.check_rules(
+            [
+                by_email(
+                    "forgot_password",
+                    body.email,
+                    limit=self._settings.rate_limit_forgot_password,
+                    window_seconds=3600,
+                )
+            ]
         )
 
         email_norm = normalize_email(body.email)
@@ -398,11 +422,15 @@ class AuthService:
         body: ResetPasswordRequest,
         ctx: ClientContext,
     ) -> MessageResponse:
-        await self._rate_limit.check(
-            "reset_password",
-            ctx.ip_address or "unknown",
-            limit=self._settings.rate_limit_reset_password,
-            window_seconds=3600,
+        await self._rate_limit.check_rules(
+            [
+                by_ip(
+                    "reset_password",
+                    ctx.ip_address or "unknown",
+                    limit=self._settings.rate_limit_reset_password,
+                    window_seconds=3600,
+                )
+            ]
         )
 
         token_hash = fingerprint_token(body.token)
@@ -434,7 +462,7 @@ class AuthService:
 
     async def validate_access_token(self, token: str) -> dict:
         payload = self._jwt.decode_token(token, expected_type="access")
-        if await self._redis.is_access_token_blacklisted(payload.jti):
+        if await is_token_revoked(self._redis, payload.jti):
             raise UnauthorizedError("Token has been revoked", code="token_revoked")
         return {
             "valid": True,
@@ -462,8 +490,24 @@ class AuthService:
             purpose=purpose,
         )
 
+        # The OTP row above is the record of truth; Redis only spares the
+        # verify step an Argon2 comparison, so a write failure is survivable.
         email_norm = normalize_email(email)
-        await self._redis.set_otp(purpose, email_norm, otp, self._settings.otp_ttl_seconds)
+        await unavailable_ok(
+            self._redis.bundle(
+                [
+                    WriteValue(
+                        key=bundle_email_key(email_norm),
+                        field=otp_field(purpose),
+                        value=otp,
+                        ttl_seconds=self._settings.otp_ttl_seconds,
+                    )
+                ],
+                now=int(time.time()),
+            ),
+            default=[],
+            what="OTP cache write",
+        )
 
         await self._email.send_verification_otp(to_email=email, otp=otp)
 
@@ -484,7 +528,15 @@ class AuthService:
         if row.attempts >= row.max_attempts:
             raise ForbiddenError("Too many verification attempts", code="otp_max_attempts")
 
-        redis_otp = await self._redis.get_otp(purpose, email_norm)
+        cached = await unavailable_ok(
+            self._redis.bundle(
+                [ReadValue(key=bundle_email_key(email_norm), field=otp_field(purpose))],
+                now=int(time.time()),
+            ),
+            default=[None],
+            what="OTP cache read",
+        )
+        redis_otp = cached[0] if cached else None
         otp_valid = (redis_otp == otp) if redis_otp else verify_otp(otp, row.otp_hash)
 
         if not otp_valid:
@@ -492,4 +544,13 @@ class AuthService:
             raise ValidationError("Invalid verification code")
 
         await verifications.mark_verified(row)
-        await self._redis.delete_otp(purpose, email_norm)
+        # The row is already marked verified, so a stale cached OTP cannot be
+        # replayed even if this delete never lands.
+        await unavailable_ok(
+            self._redis.bundle(
+                [DeleteValue(key=bundle_email_key(email_norm), field=otp_field(purpose))],
+                now=int(time.time()),
+            ),
+            default=[],
+            what="OTP cache delete",
+        )

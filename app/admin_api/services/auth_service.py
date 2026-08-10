@@ -9,7 +9,7 @@ from app.admin_api.core.security.jwt import AdminJWTManager
 from app.admin_api.core.security.password import verify_password, waste_verification_time
 from app.admin_api.repositories.admin_auth_repository import AdminAuthRepository
 from app.admin_api.schemas.auth import AdminLoginResponse, AdminProfile
-from app.identity.services.rate_limit_service import RateLimitService
+from app.identity.services.rate_limit_service import RateLimitService, by_email, by_ip
 
 #: Per-IP and per-email attempt caps on the admin sign-in form. The admin panel
 #: is a single high-value account, so this is deliberately tighter than the
@@ -63,19 +63,24 @@ class AdminAuthService:
         """
         if self._rate_limit is None:
             return
-        await self._rate_limit.check(
-            "admin_login_email",
-            email.strip().lower(),
-            limit=LOGIN_ATTEMPT_LIMIT,
-            window_seconds=LOGIN_WINDOW_SECONDS,
-        )
-        if ip_address:
-            await self._rate_limit.check(
-                "admin_login_ip",
-                ip_address,
-                limit=LOGIN_ATTEMPT_LIMIT * 2,
+        rules = [
+            by_email(
+                "admin_login_email",
+                email,
+                limit=LOGIN_ATTEMPT_LIMIT,
                 window_seconds=LOGIN_WINDOW_SECONDS,
             )
+        ]
+        if ip_address:
+            rules.append(
+                by_ip(
+                    "admin_login_ip",
+                    ip_address,
+                    limit=LOGIN_ATTEMPT_LIMIT * 2,
+                    window_seconds=LOGIN_WINDOW_SECONDS,
+                )
+            )
+        await self._rate_limit.check_rules(rules)
 
     async def get_profile(self, admin_id: uuid.UUID) -> AdminProfile:
         from sqlalchemy import select
