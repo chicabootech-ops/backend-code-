@@ -78,6 +78,7 @@ from app.admin_api.routers import (
     maintenance as admin_maintenance,
     media as admin_media,
     orders as admin_orders,
+    payments as admin_payments,
     products as admin_products,
     testimonials as admin_testimonials,
     users as admin_users,
@@ -289,6 +290,7 @@ app.include_router(admin_categories.router)
 app.include_router(admin_products.router)
 app.include_router(admin_users.router)
 app.include_router(admin_orders.router)
+app.include_router(admin_payments.router)
 app.include_router(admin_invoices.router)
 app.include_router(admin_maintenance.router)
 app.include_router(admin_media.router)
