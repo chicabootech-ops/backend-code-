@@ -93,18 +93,34 @@ async def lifespan(app: FastAPI):
     engine = create_engine(settings.database_dsn)
     session_factory = create_session_factory(engine)
 
+    # Upstash requires TLS — the URL must be rediss://, not redis://. A plain
+    # redis:// URL still opens the TCP socket, so the failure surfaces late as a
+    # ConnectionError on the protocol handshake rather than as a refused connect.
+    if settings.redis_url.startswith("redis://") and "upstash.io" in settings.redis_url:
+        logger.error(
+            "REDIS_URL uses redis:// against Upstash, which requires TLS. Every "
+            "Redis call will fail. Change it to rediss://"
+        )
+
     # protocol=2 (RESP2): redis-py 8 defaults to RESP3, whose HELLO handshake
     # Upstash closes ("Connection closed by server"). The health check + keepalive
     # + retry keep pooled connections alive against Upstash's idle-close behaviour.
+    #
+    # Timeouts and retries are deliberately tight. Redis here is a cache and a
+    # token blacklist, and every caller already degrades gracefully without it —
+    # so the cost of an outage should be measured in milliseconds, not seconds.
+    # The previous settings (10s timeouts, 3 retries with backoff to 3s) meant a
+    # dead Redis added ~2s to *every authenticated request*, because the token
+    # blacklist check sits on that path.
     redis_raw = Redis.from_url(
         settings.redis_url,
         decode_responses=False,
         protocol=2,
         health_check_interval=30,
         socket_keepalive=True,
-        socket_connect_timeout=10,
-        socket_timeout=10,
-        retry=Retry(ExponentialBackoff(cap=3, base=0.1), retries=3),
+        socket_connect_timeout=2,
+        socket_timeout=2,
+        retry=Retry(ExponentialBackoff(cap=0.25, base=0.05), retries=1),
         retry_on_error=[RedisConnectionError, RedisTimeoutError],
     )
     redis_client = RedisClient(redis_raw)
