@@ -57,12 +57,69 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_pass: str = ""
 
-    # Message Central (VerifyNow) SMS OTP
+    # Message Central. The same account serves two products:
+    #   VerifyNow  — provider-generated OTP (legacy; retained but no longer used
+    #                for OTP because it never exposes the code to us, which makes
+    #                "same OTP on WhatsApp and SMS" impossible)
+    #   Message Now — plain SMS send, used as the OTP/transactional SMS fallback
     message_central_customer_id: str = ""
     message_central_email: str = ""
     message_central_password: str = ""
     message_central_country_code: str = "91"
     message_central_otp_length: int = 6
+    #: Message Now sender id (6-char alphanumeric header approved by the DLT registry).
+    message_central_sender_id: str = ""
+    #: Message Now send path. Configurable because the account's product tier
+    #: determines the endpoint; confirm against your Message Central dashboard.
+    message_central_sms_path: str = "/verification/v3/send"
+
+    # --- WhatsApp Business Platform (Meta Cloud API) -------------------------
+    # Server-side only. WHATSAPP_ACCESS_TOKEN and WHATSAPP_APP_SECRET must never
+    # reach a client; nothing here is exposed through a NEXT_PUBLIC_* variable.
+    whatsapp_enabled: bool = False
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_business_account_id: str = ""
+    whatsapp_app_id: str = ""
+    whatsapp_app_secret: str = ""
+    #: Echoed back on Meta's GET hub challenge when registering the webhook.
+    whatsapp_verify_token: str = ""
+    #: Meta signs webhook bodies with the app secret; this overrides it if set.
+    whatsapp_webhook_secret: str = ""
+    whatsapp_api_version: str = "v21.0"
+    whatsapp_default_language: str = "en"
+
+    # --- Channel policy ------------------------------------------------------
+    notification_primary_provider: str = "whatsapp"
+    message_central_enabled: bool = True
+
+    otp_primary_channel: str = "whatsapp"
+    otp_fallback_channel: str = "sms"
+    otp_whatsapp_fallback_enabled: bool = True
+
+    transactional_primary_channel: str = "whatsapp"
+    transactional_fallback_channel: str = "sms"
+
+    marketing_primary_channel: str = "whatsapp"
+    #: Deliberately False. A failed marketing WhatsApp must not silently become a
+    #: paid SMS; campaigns opt in individually.
+    marketing_sms_fallback: bool = False
+
+    #: What to do when WhatsApp neither confirms nor denies (timeout).
+    #: never      — wait for reconciliation only (safest, may delay the OTP)
+    #: reconcile  — re-check with Meta, fall back only if still unresolved
+    #: immediate  — fall back at once (most duplicates)
+    otp_unknown_fallback_policy: str = "reconcile"
+    #: How long to wait for a delivery signal before the reconcile policy acts.
+    otp_unknown_reconcile_seconds: int = 20
+
+    # OTP lifecycle
+    otp_max_verify_attempts: int = 5
+    otp_resend_cooldown_seconds: int = 60
+    #: Max OTP requests per destination per hour.
+    rate_limit_otp_per_phone_hourly: int = 5
+    #: Max OTP requests per IP per hour.
+    rate_limit_otp_per_ip_hourly: int = 20
 
     max_failed_login_attempts: int = 5
     account_lockout_minutes: int = 30
@@ -132,6 +189,20 @@ class Settings(BaseSettings):
     @property
     def razorpay_configured(self) -> bool:
         return bool(self.razorpay_key_id and self.razorpay_key_secret)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def whatsapp_configured(self) -> bool:
+        return bool(
+            self.whatsapp_enabled
+            and self.whatsapp_access_token
+            and self.whatsapp_phone_number_id
+        )
+
+    @property
+    def whatsapp_signing_secret(self) -> str:
+        """Meta signs webhooks with the app secret unless one is set explicitly."""
+        return self.whatsapp_webhook_secret or self.whatsapp_app_secret
 
     @property
     def database_dsn(self) -> str:

@@ -18,6 +18,11 @@ from app.config import settings
 from app.db.session import create_engine, create_session_factory
 from app.events.bus import EventBus, set_event_bus
 from app.events.worker import EventWorker
+from app.notifications.providers.message_central import MessageCentralProvider
+from app.notifications.providers.whatsapp import WhatsAppProvider
+from app.notifications.router import router as whatsapp_webhook_router
+from app.notifications.service import NotificationService
+from app.notifications.types import Channel
 from app.storefront.lib.catalog_cache import CatalogCache
 from app.storefront.lib.razorpay_client import RazorpayClient
 from app.storefront.workers.reconciliation_worker import ReconciliationWorker
@@ -152,7 +157,28 @@ async def lifespan(app: FastAPI):
     )
     avatar_service = AvatarService(r2_client)
     message_central = MessageCentralClient(settings)
-    phone_service = PhoneService(settings, redis_client, rate_limit_service, message_central)
+
+    # Notification providers. WhatsApp is primary; Message Central serves the
+    # SMS fallback. Both are skipped gracefully when unconfigured, so a partial
+    # rollout degrades to whatever is actually set up.
+    notification_providers = {
+        Channel.WHATSAPP: WhatsAppProvider(settings),
+        Channel.SMS: MessageCentralProvider(settings, message_central),
+    }
+
+    def build_notifications(session):
+        return NotificationService(session, settings, providers=notification_providers)
+
+    app.state.notification_providers = notification_providers
+    app.state.build_notifications = build_notifications
+
+    phone_service = PhoneService(
+        settings,
+        redis_client,
+        rate_limit_service,
+        message_central,
+        notifications_factory=build_notifications,
+    )
 
     # An empty HMAC secret means anyone can forge an admin token, so this is a
     # hard stop in production rather than a warning.
@@ -162,11 +188,18 @@ async def lifespan(app: FastAPI):
         logger.warning("ADMIN_JWT_SECRET is empty — set it in .env before deploying")
     elif len(settings.admin_jwt_secret) < 32 and settings.is_production:
         raise RuntimeError("ADMIN_JWT_SECRET must be at least 32 characters in production")
+    if not settings.whatsapp_configured:
+        logger.warning(
+            "WhatsApp not configured — notifications fall through to SMS. Set "
+            "WHATSAPP_ENABLED, WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID"
+        )
     if not message_central.configured:
         logger.warning(
-            "Message Central not configured — phone OTP disabled until "
+            "Message Central not configured — SMS fallback unavailable until "
             "MESSAGE_CENTRAL_CUSTOMER_ID / EMAIL / PASSWORD are set"
         )
+    if not settings.whatsapp_configured and not message_central.configured:
+        logger.error("No phone notification channel is configured — OTP cannot be delivered")
     if not settings.resend_api_key and not (
         settings.smtp_host and settings.smtp_user and settings.smtp_pass
     ):
@@ -206,6 +239,7 @@ async def lifespan(app: FastAPI):
     await event_worker.stop()
     await reconciliation_worker.stop()
     await RazorpayClient.aclose()
+    await WhatsAppProvider.aclose()
     await redis_client.close()
     await engine.dispose()
     logger.info("Chic A Boo API shutdown complete")
@@ -307,6 +341,9 @@ app.include_router(admin_products.router)
 app.include_router(admin_users.router)
 app.include_router(admin_orders.router)
 app.include_router(admin_payments.router)
+
+# Provider webhooks (no auth — authenticity comes from the Meta signature)
+app.include_router(whatsapp_webhook_router)
 app.include_router(admin_invoices.router)
 app.include_router(admin_maintenance.router)
 app.include_router(admin_media.router)
