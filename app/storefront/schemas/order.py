@@ -59,6 +59,7 @@ class CheckoutRequest(BaseModel):
 
 
 class OrderItemOut(BaseModel):
+    product_id: UUID
     product_name: str
     variant_title: str
     sku: str
@@ -67,6 +68,37 @@ class OrderItemOut(BaseModel):
     line_total_paise: int
     hsn_code: str | None = None
     tax_rate_bps: int | None = None
+    #: Resolved from the product at read time, not snapshotted at checkout.
+    #: Snapshotting would be more historically faithful, but every order placed
+    #: before this field existed would show nothing. None when the product was
+    #: deleted or never had an image.
+    image_url: str | None = None
+    #: Present for made-to-order bouquets, whose configuration is snapshotted
+    #: onto the line rather than living on a product row.
+    slug: str | None = None
+
+
+class OrderStatusEventOut(BaseModel):
+    """One step on the order timeline.
+
+    Read from commerce.order_status_history, which has always been written on
+    every transition but was never exposed — the UI could show a current status
+    and nothing about how the order got there.
+    """
+
+    from_status: str | None = None
+    to_status: str
+    changed_by_type: str
+    reason: str | None = None
+    created_at: datetime
+
+
+class OrderItemPreviewOut(BaseModel):
+    """Just enough of a line to render a list row: a thumbnail and a name."""
+
+    product_name: str
+    image_url: str | None = None
+    quantity: int
 
 
 class OrderInvoiceOut(BaseModel):
@@ -93,6 +125,7 @@ class OrderOut(BaseModel):
     created_at: datetime
     items: list[OrderItemOut] = Field(default_factory=list)
     invoice: OrderInvoiceOut | None = None
+    status_history: list[OrderStatusEventOut] = Field(default_factory=list)
 
 
 class OrderListItemOut(BaseModel):
@@ -103,6 +136,7 @@ class OrderListItemOut(BaseModel):
     grand_total_paise: int
     item_count: int
     created_at: datetime
+    items_preview: list[OrderItemPreviewOut] = Field(default_factory=list)
 
 
 class OrderListResponse(BaseModel):

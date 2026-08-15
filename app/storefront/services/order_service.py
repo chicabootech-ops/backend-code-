@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any, Iterable
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.storefront.models.commerce import Invoice, Order
+from app.storefront.lib.media import product_image_url
+from app.storefront.models.commerce import Invoice, Order, OrderStatusHistory
+from app.storefront.models.product import Product
 from app.storefront.repositories.invoice_repository import InvoiceRepository
 from app.storefront.repositories.order_repository import OrderRepository
 from app.storefront.services.inventory_service import InventoryService
 from app.storefront.schemas.order import (
     OrderInvoiceOut,
     OrderItemOut,
+    OrderItemPreviewOut,
     OrderListItemOut,
     OrderListResponse,
     OrderOut,
+    OrderStatusEventOut,
 )
 from app.storefront.services.invoice_service import InvoiceService
 
@@ -36,13 +42,26 @@ class OrderService:
         self._invoice_service = InvoiceService(session)
         self._inventory = InventoryService(session)
 
+    #: How many thumbnails a list row shows before collapsing into "+N more".
+    PREVIEW_LIMIT = 4
+
     async def list_orders(
         self, user_id: uuid.UUID, *, page: int = 1, page_size: int = 20
     ) -> OrderListResponse:
         orders, total = await self._orders.list_by_user(user_id, page=page, page_size=page_size)
+
+        # Items were already being loaded here and thrown away except for the
+        # quantity sum, which is why the list could only ever render an order
+        # number. Collect them once, then resolve every product in ONE query
+        # rather than per order.
+        items_by_order = {o.id: await self._orders.get_items(o.id) for o in orders}
+        media = await self._product_media(
+            line for lines in items_by_order.values() for line in lines
+        )
+
         items = []
         for order in orders:
-            order_items = await self._orders.get_items(order.id)
+            order_items = items_by_order[order.id]
             items.append(
                 OrderListItemOut(
                     id=order.id,
@@ -52,9 +71,36 @@ class OrderService:
                     grand_total_paise=order.grand_total_paise,
                     item_count=sum(i.quantity for i in order_items),
                     created_at=order.created_at,
+                    items_preview=[
+                        OrderItemPreviewOut(
+                            product_name=i.product_name,
+                            image_url=media.get(i.product_id, (None, None))[0],
+                            quantity=i.quantity,
+                        )
+                        for i in order_items[: self.PREVIEW_LIMIT]
+                    ],
                 )
             )
         return OrderListResponse(items=items, total=total, page=page, page_size=page_size)
+
+    async def _product_media(
+        self, lines: Iterable[Any]
+    ) -> dict[uuid.UUID, tuple[str | None, str | None]]:
+        """product_id -> (image_url, slug) for every product referenced.
+
+        Batched deliberately: resolving media per line turns an order list into
+        one query per item. Missing ids are simply absent — a deleted product
+        must not break order history.
+        """
+        ids = {line.product_id for line in lines}
+        if not ids:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(Product.id, Product.metadata_, Product.slug).where(Product.id.in_(ids))
+            )
+        ).all()
+        return {row[0]: (product_image_url(row[1]), row[2]) for row in rows}
 
     async def get_order(self, order_id: uuid.UUID, user_id: uuid.UUID) -> OrderOut:
         order = await self._require_order(order_id, user_id)
@@ -112,6 +158,14 @@ class OrderService:
     async def _to_out(self, order: Order) -> OrderOut:
         items = await self._orders.get_items(order.id)
         invoice: Invoice | None = await self._invoices.get_by_order(order.id)
+        media = await self._product_media(items)
+        history = (
+            await self._session.execute(
+                select(OrderStatusHistory)
+                .where(OrderStatusHistory.order_id == order.id)
+                .order_by(OrderStatusHistory.created_at)
+            )
+        ).scalars().all()
         return OrderOut(
             id=order.id,
             order_number=order.order_number,
@@ -130,6 +184,7 @@ class OrderService:
             created_at=order.created_at,
             items=[
                 OrderItemOut(
+                    product_id=i.product_id,
                     product_name=i.product_name,
                     variant_title=i.variant_title,
                     sku=i.sku,
@@ -138,8 +193,20 @@ class OrderService:
                     line_total_paise=i.line_total_paise,
                     hsn_code=i.hsn_code,
                     tax_rate_bps=i.tax_rate_bps,
+                    image_url=media.get(i.product_id, (None, None))[0],
+                    slug=media.get(i.product_id, (None, None))[1],
                 )
                 for i in items
+            ],
+            status_history=[
+                OrderStatusEventOut(
+                    from_status=h.from_status,
+                    to_status=h.to_status,
+                    changed_by_type=h.changed_by_type,
+                    reason=h.reason,
+                    created_at=h.created_at,
+                )
+                for h in history
             ],
             invoice=(
                 OrderInvoiceOut(
