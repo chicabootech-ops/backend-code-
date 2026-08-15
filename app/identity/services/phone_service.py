@@ -164,12 +164,17 @@ class PhoneService:
         # was sent, and nobody finds out otherwise until someone reads the logs.
         # UNKNOWN is deliberately not treated as a failure — the message may well
         # have arrived, and telling the user to retry would duplicate the code.
+        # 503, not 502. This is served through Vercel behind Cloudflare, and both
+        # layers read 502/504 as "the origin is broken" — Cloudflare drops the
+        # body and substitutes its own error page, so the customer sees a scary
+        # infrastructure notice instead of the sentence above. 503 says the same
+        # thing about the provider and is forwarded intact.
         if outcome.failed:
             await otp_service.supersede(challenge.id)
             raise AppError(
                 "We could not send your verification code right now. Please try again.",
                 code="otp_send_failed",
-                status_code=502,
+                status_code=503,
             )
 
         return MessageResponse(message="OTP sent to your phone number.")
