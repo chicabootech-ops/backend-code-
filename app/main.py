@@ -76,6 +76,7 @@ from app.admin_api.routers import (
     auth as admin_auth,
     bouquet_options as admin_bouquet_options,
     subscribers as admin_subscribers,
+    campaigns as admin_campaigns,
     categories as admin_categories,
     coupons,
     inventory,
@@ -346,6 +347,7 @@ app.include_router(admin_media.router)
 app.include_router(admin_testimonials.router)
 app.include_router(admin_bouquet_options.router)
 app.include_router(admin_subscribers.router)
+app.include_router(admin_campaigns.router)
 app.include_router(inventory.router)
 app.include_router(analytics.router)
 app.include_router(coupons.router)
