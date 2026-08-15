@@ -18,6 +18,21 @@ class OrderTrackingEvent(BaseModel):
     created_at: datetime
 
 
+class AdminOrderItemOut(BaseModel):
+    """A line as the admin needs to see it: what was bought, and what it looked like."""
+
+    product_id: UUID
+    product_name: str
+    variant_title: str
+    sku: str
+    quantity: int
+    unit_price_paise: int
+    line_total_paise: int
+    #: Resolved from the product at read time. None when the product was
+    #: deleted or never had an image — order history must survive both.
+    image_url: str | None = None
+
+
 class AdminOrderOut(BaseModel):
     id: UUID
     order_number: int
@@ -32,6 +47,8 @@ class AdminOrderOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     tracking: list[OrderTrackingEvent] = Field(default_factory=list)
+    items: list[AdminOrderItemOut] = Field(default_factory=list)
+    item_count: int = 0
 
 
 class OrderListResponse(BaseModel):
