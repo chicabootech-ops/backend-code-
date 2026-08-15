@@ -51,7 +51,12 @@ class EmailService:
     async def send_newsletter_confirmation(
         self, *, to_email: str, confirm_token: str
     ) -> None:
-        confirm_url = f"{self.site_url}/api/newsletter/confirm?token={confirm_token}"
+        # A page, not an API path. This used to point at
+        # `{site_url}/api/newsletter/confirm`, which is a storefront URL that had
+        # no route — every confirmation link 404'd. Even had it resolved, it
+        # would have shown the reader raw JSON. The storefront still redirects
+        # the old path here so links already sitting in inboxes keep working.
+        confirm_url = f"{self.site_url}/newsletter/confirm?token={confirm_token}"
         html = (
             "<h1>Confirm your Chic A Boo subscription</h1>"
             "<p>One last step before the little joys arrive in your inbox.</p>"
