@@ -93,11 +93,19 @@ class Settings(BaseSettings):
     notification_primary_provider: str = "whatsapp"
     message_central_enabled: bool = True
 
-    otp_primary_channel: str = "whatsapp"
+    # SMS (Message Central) is the only live phone channel. These defaults used
+    # to be "whatsapp", which meant any deployment that did not explicitly set
+    # the env vars sent every OTP to WhatsApp first — where no template is
+    # approved, so it failed and burned ~2s before falling back. Defaulting to
+    # the channel that actually works keeps a missing env var from routing to a
+    # dead one. Flip back to "whatsapp" once Meta approves the templates.
+    otp_primary_channel: str = "sms"
     otp_fallback_channel: str = "sms"
-    otp_whatsapp_fallback_enabled: bool = True
+    #: No fallback: SMS is both primary and the only option, and attempting a
+    #: second channel that cannot deliver only delays the error the caller needs.
+    otp_whatsapp_fallback_enabled: bool = False
 
-    transactional_primary_channel: str = "whatsapp"
+    transactional_primary_channel: str = "sms"
     transactional_fallback_channel: str = "sms"
 
     marketing_primary_channel: str = "whatsapp"
