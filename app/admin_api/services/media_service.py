@@ -38,7 +38,10 @@ _MAGIC_PREFIXES: tuple[tuple[bytes, str], ...] = (
     (b"GIF89a", "image/gif"),
 )
 
-ALLOWED_FOLDERS = frozenset({"categories", "products", "testimonials", "banners"})
+#: "bouquet" holds builder option photos (flower/wrap samples). Keeping them
+#: out of "products" means a bouquet sample is never mistaken for a catalogue
+#: image when browsing the bucket.
+ALLOWED_FOLDERS = frozenset({"categories", "products", "testimonials", "banners", "bouquet"})
 
 
 def _sniff_content_type(data: bytes) -> str:
