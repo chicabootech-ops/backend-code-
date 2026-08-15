@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import text
@@ -54,6 +55,26 @@ _PROVIDER_FOR_CHANNEL = {
     Channel.WHATSAPP: Provider.WHATSAPP,
     Channel.SMS: Provider.MESSAGE_CENTRAL,
 }
+
+
+@dataclass(slots=True)
+class SendOutcome:
+    """The result of `send()` — the row it created *and* how delivery went.
+
+    These are two different questions and callers need both. An OTP caller in
+    particular must not report "code sent" when the whole channel ladder failed;
+    returning only the id made that mistake the easy one to make.
+    """
+
+    notification_id: uuid.UUID | None
+    #: None when nothing was delivered inline — a duplicate was suppressed,
+    #: consent was missing, or the caller passed deliver_now=False.
+    status: DeliveryStatus | None
+
+    @property
+    def failed(self) -> bool:
+        """True only for a definitive failure. UNKNOWN is deliberately not one."""
+        return self.status is DeliveryStatus.FAILED
 
 
 class NotificationService:
@@ -86,11 +107,13 @@ class NotificationService:
         campaign_id: uuid.UUID | None = None,
         allow_fallback: bool | None = None,
         deliver_now: bool = True,
-    ) -> uuid.UUID | None:
+    ) -> SendOutcome:
         """Create and (by default) deliver a notification.
 
-        Returns the notification id, or None when this exact notification was
-        already created — a duplicate order event produces no second message.
+        The outcome carries the notification id — None when this exact
+        notification was already created, so a duplicate order event produces no
+        second message — and the delivery status, so a caller can tell the
+        difference between "sent" and "every channel failed".
         """
         ntype = NotificationType(notification_type)
         category = category_for(ntype)
@@ -104,7 +127,7 @@ class NotificationService:
         if category is Category.MARKETING and user_id is not None:
             if not await self._marketing_allowed(user_id, primary):
                 logger.info("notification_suppressed_no_consent type=%s", ntype)
-                return None
+                return SendOutcome(notification_id=None, status=None)
 
         notification_id = await self._repo.claim(
             notification_type=str(ntype),
@@ -122,16 +145,15 @@ class NotificationService:
         )
         if notification_id is None:
             logger.info("notification_duplicate_suppressed key=%s", idempotency_key)
-            return None
+            return SendOutcome(notification_id=None, status=None)
 
         logger.info(
             "notification_created type=%s id=%s channel=%s", ntype, notification_id, primary
         )
         await self._session.commit()
 
-        if deliver_now:
-            await self.deliver(notification_id)
-        return notification_id
+        status = await self.deliver(notification_id) if deliver_now else None
+        return SendOutcome(notification_id=notification_id, status=status)
 
     async def deliver(self, notification_id: uuid.UUID) -> DeliveryStatus:
         """Run the channel ladder for one notification. Safe to re-run."""

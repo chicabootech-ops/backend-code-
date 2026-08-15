@@ -30,6 +30,7 @@ from app.identity.core.exceptions import AppError
 from app.identity.integrations.message_central import BASE_URL, MessageCentralClient
 from app.notifications.providers.base import NotificationProvider
 from app.notifications.types import (
+    Category,
     Channel,
     DeliveryStatus,
     ErrorClass,
@@ -63,6 +64,15 @@ _TRANSIENT_FRAGMENTS = (
     "TEMPORARY",
     "TRY_AGAIN",
 )
+
+#: Message Now's `messageType`. It is a required parameter, and it is also what
+#: decides DLT routing in India — an OTP sent as PROMOTIONAL is filtered on DND
+#: numbers and lands nowhere, which looks exactly like "SMS silently not working".
+_MESSAGE_TYPE_FOR_CATEGORY = {
+    Category.OTP: "OTP",
+    Category.TRANSACTIONAL: "TRANSACTION",
+    Category.MARKETING: "PROMOTIONAL",
+}
 
 
 class MessageCentralProvider(NotificationProvider):
@@ -125,9 +135,19 @@ class MessageCentralProvider(NotificationProvider):
             "mobileNumber": national,
             "message": body,
             "type": "SMS",
+            "messageType": _MESSAGE_TYPE_FOR_CATEGORY.get(message.category, "TRANSACTION"),
         }
         if self._settings.message_central_sender_id:
             params["senderId"] = self._settings.message_central_sender_id
+        else:
+            # Message Now lists senderId as required, and Indian DLT rejects a
+            # send without an approved header. Say so here rather than letting
+            # the provider answer with an opaque response code.
+            logger.warning(
+                "sms_no_sender_id type=%s — set MESSAGE_CENTRAL_SENDER_ID to your "
+                "DLT-approved header; the send will likely be rejected",
+                message.notification_type,
+            )
 
         url = f"{BASE_URL}{self._settings.message_central_sms_path}"
         try:

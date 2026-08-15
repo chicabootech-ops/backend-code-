@@ -124,6 +124,25 @@ class OtpService:
         )
         return OtpChallenge(id=challenge_id, code=code, expires_at=expires_at)
 
+    async def supersede(self, challenge_id: uuid.UUID) -> None:
+        """Retire a challenge whose code never made it out.
+
+        Without this, a failed send still starts the resend cooldown, so the user
+        is told "please try again" and then refused for the next minute.
+        """
+        await self._session.execute(
+            text(
+                """
+                UPDATE identity.otp_challenges
+                SET superseded_at = now()
+                WHERE id = :id AND consumed_at IS NULL AND superseded_at IS NULL
+                """
+            ),
+            {"id": str(challenge_id)},
+        )
+        await self._session.commit()
+        logger.info("otp_challenge_superseded id=%s reason=send_failed", challenge_id)
+
     # ------------------------------------------------------------------ #
     # Verify
     # ------------------------------------------------------------------ #
@@ -194,12 +213,19 @@ class OtpService:
     # Limits
     # ------------------------------------------------------------------ #
     async def _enforce_cooldown(self, destination: str, purpose: str) -> None:
+        # Superseded challenges are excluded on purpose. `issue` supersedes the
+        # previous challenge *after* this check, so a genuine resend is still
+        # rate-limited; the only rows this skips are the ones `supersede` retired
+        # because their code never reached the customer. The hourly per-phone cap
+        # still counts those, so this cannot be used to send without limit.
+
         last = (
             await self._session.execute(
                 text(
                     """
                     SELECT created_at FROM identity.otp_challenges
                     WHERE destination = :dest AND purpose = :purpose
+                      AND superseded_at IS NULL
                     ORDER BY created_at DESC LIMIT 1
                     """
                 ),

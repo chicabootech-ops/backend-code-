@@ -144,7 +144,7 @@ class PhoneService:
         # WhatsApp first, SMS only on a definitive WhatsApp failure. The
         # challenge id is the idempotency key, so a double-submit cannot send
         # the same code twice.
-        await notifications.send(
+        outcome = await notifications.send(
             NotificationType.OTP_PHONE_VERIFY,
             recipient=e164_like,
             variables={"otp": challenge.code},
@@ -153,6 +153,19 @@ class PhoneService:
             reference_type="otp",
             otp_challenge_id=challenge.id,
         )
+
+        # Every channel failed definitively. Reporting success here is how a
+        # dead SMS provider looks like a customer problem: the API says the code
+        # was sent, and nobody finds out otherwise until someone reads the logs.
+        # UNKNOWN is deliberately not treated as a failure — the message may well
+        # have arrived, and telling the user to retry would duplicate the code.
+        if outcome.failed:
+            await otp_service.supersede(challenge.id)
+            raise AppError(
+                "We could not send your verification code right now. Please try again.",
+                code="otp_send_failed",
+                status_code=502,
+            )
 
         return MessageResponse(message="OTP sent to your phone number.")
 
@@ -163,13 +176,12 @@ class PhoneService:
         *,
         otp: str,
     ) -> MessageResponse:
-        if not self._sms.configured:
-            raise AppError(
-                "Phone verification is not configured yet.",
-                code="sms_not_configured",
-                status_code=503,
-            )
-
+        # No provider check here, deliberately. Verification is entirely local
+        # now — the code is matched against the Argon2 hash in
+        # identity.otp_challenges. Gating it on Message Central was correct only
+        # while VerifyNow validated the code for us; keeping it would reject a
+        # perfectly good code whenever the SMS provider happened to be
+        # unconfigured or down.
         await self._rate_limit.check_rules(
             [
                 by_user(
