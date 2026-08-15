@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 #: Which provider serves which channel.
 _PROVIDER_FOR_CHANNEL = {
     Channel.WHATSAPP: Provider.WHATSAPP,
-    Channel.SMS: Provider.MESSAGE_CENTRAL,
+    Channel.SMS: Provider.MSG91,
 }
 
 

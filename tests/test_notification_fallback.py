@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.notifications.providers.message_central import MessageCentralProvider
+from app.notifications.providers.msg91 import Msg91Provider, _msisdn, _stringify
 from app.notifications.providers.whatsapp import WhatsAppProvider
 from app.notifications.types import (
     Category,
@@ -103,21 +103,36 @@ def test_unrecognised_whatsapp_code_is_not_wrongly_permanent():
 
 
 # --------------------------------------------------------------------------- #
-# Message Central classification
+# MSG91 classification
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     ("text", "http", "expected"),
     [
-        ("INVALID_MOBILE", 400, ErrorClass.PERMANENT),
+        ("INVALID NUMBER", 400, ErrorClass.PERMANENT),
         ("DND REGISTERED", 400, ErrorClass.PERMANENT),
-        ("RATE_LIMIT EXCEEDED", 429, ErrorClass.TRANSIENT),
+        ("INVALID AUTHKEY", 401, ErrorClass.PERMANENT),
+        ("INSUFFICIENT BALANCE", 400, ErrorClass.PERMANENT),
+        ("RATE LIMIT EXCEEDED", 429, ErrorClass.TRANSIENT),
         ("", 503, ErrorClass.TRANSIENT),
         ("", 401, ErrorClass.PERMANENT),
+        # A 200 whose body says "error" with no phrase we recognise must not be
+        # called a definitive failure.
+        ("SOMETHING WE HAVE NOT SEEN", 200, ErrorClass.UNKNOWN),
     ],
 )
-def test_message_central_classification(text, http, expected):
-    provider = MessageCentralProvider(SimpleNamespace(message_central_enabled=True))
+def test_msg91_classification(text, http, expected):
+    provider = Msg91Provider(_msg91_settings())
     assert provider._classify(text, http) is expected
+
+
+def test_msg91_transient_wins_over_permanent_substring():
+    """"TRY AGAIN" contains no permanent fragment, but "TIMEOUT" must not lose.
+
+    Ordering matters here: several permanent fragments are short words that also
+    appear inside transient messages, so transient is checked first.
+    """
+    provider = Msg91Provider(_msg91_settings())
+    assert provider._classify("REQUEST TIMEOUT, TRY AGAIN", 500) is ErrorClass.TRANSIENT
 
 
 # --------------------------------------------------------------------------- #
@@ -149,39 +164,84 @@ def test_marketing_is_its_own_category():
 
 
 # --------------------------------------------------------------------------- #
-# SMS body rendering — the same OTP must reach the SMS template
+# MSG91 template resolution and recipient normalisation
 # --------------------------------------------------------------------------- #
-def test_sms_body_renders_the_supplied_otp():
-    provider = MessageCentralProvider(SimpleNamespace(message_central_enabled=True))
-    message = OutboundMessage(
+def _msg91_settings(template_id="DEFAULT_TPL", country="91"):
+    return SimpleNamespace(
+        msg91_enabled=True,
+        msg91_auth_key="k",
+        msg91_template_id=template_id,
+        msg91_sender_id="CHICAB",
+        msg91_base_url="https://control.msg91.com",
+        msg91_flow_path="/api/v5/flow",
+        sms_country_code=country,
+    )
+
+
+def _otp_message(template=None):
+    return OutboundMessage(
         notification_type=NotificationType.OTP_PHONE_VERIFY,
         category=Category.OTP,
         recipient="+919876543210",
         variables={"otp": "483921"},
-        template=TemplateBinding(
+        template=template,
+    )
+
+
+def test_row_template_id_wins_over_the_configured_default():
+    provider = Msg91Provider(_msg91_settings())
+    message = _otp_message(
+        TemplateBinding(
+            provider_template_name=None,
+            provider_template_id="ROW_TPL",
+            language="en",
+            category="authentication",
+            body_text=None,
+        )
+    )
+    assert provider._template_id(message) == "ROW_TPL"
+
+
+def test_falls_back_to_configured_template_when_the_row_has_none():
+    provider = Msg91Provider(_msg91_settings())
+    message = _otp_message(
+        TemplateBinding(
             provider_template_name=None,
             provider_template_id=None,
             language="en",
             category="authentication",
-            body_text="Your Chic A Boo verification code is {otp}.",
-        ),
+            body_text=None,
+        )
     )
-    assert provider._render(message) == "Your Chic A Boo verification code is 483921."
+    assert provider._template_id(message) == "DEFAULT_TPL"
 
 
-def test_sms_render_refuses_rather_than_sending_a_broken_placeholder():
-    provider = MessageCentralProvider(SimpleNamespace(message_central_enabled=True))
-    message = OutboundMessage(
-        notification_type=NotificationType.ORDER_CONFIRMED,
-        category=Category.TRANSACTIONAL,
-        recipient="+919876543210",
-        variables={},  # missing order_number
-        template=TemplateBinding(
-            provider_template_name=None, provider_template_id=None, language="en",
-            category="utility", body_text="Order #{order_number} confirmed.",
-        ),
-    )
-    assert provider._render(message) is None
+def test_no_template_anywhere_resolves_to_none_rather_than_empty_string():
+    """An empty template id would be sent to MSG91 and rejected opaquely."""
+    provider = Msg91Provider(_msg91_settings(template_id=""))
+    assert provider._template_id(_otp_message(None)) is None
+
+
+@pytest.mark.parametrize(
+    ("recipient", "expected"),
+    [
+        ("+919876543210", "919876543210"),
+        ("919876543210", "919876543210"),
+        ("9876543210", "919876543210"),  # bare national number gets the prefix
+        ("+91 98765 43210", "919876543210"),
+        ("", None),
+        ("12", None),  # too short to be a number
+    ],
+)
+def test_msisdn_normalisation(recipient, expected):
+    assert _msisdn(recipient, "91") == expected
+
+
+def test_variables_are_stringified_because_msg91_rejects_non_strings():
+    assert _stringify({"otp": 483921, "n": None, "name": "Ragini"}) == {
+        "otp": "483921",
+        "name": "Ragini",
+    }
 
 
 def test_whatsapp_payload_orders_variables_by_template_binding():

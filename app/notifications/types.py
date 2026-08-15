@@ -27,7 +27,7 @@ class Channel(StrEnum):
 
 class Provider(StrEnum):
     WHATSAPP = "whatsapp"
-    MESSAGE_CENTRAL = "message_central"
+    MSG91 = "msg91"
     RESEND = "resend"
     SMTP = "smtp"
 

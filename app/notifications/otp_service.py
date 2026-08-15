@@ -1,8 +1,9 @@
 """Self-issued OTP challenges.
 
-Previously Message Central VerifyNow generated the code and we only held a
+The code is generated, hashed and verified here — never by the SMS vendor. An
+earlier integration delegated generation to the provider and we only held a
 `verification_id`. That had two consequences worth spelling out, because both are
-fixed here:
+fixed here, and they are why MSG91's OTP product is not used either:
 
 1.  **The same code could not be sent over two channels.** WhatsApp needs the
     code as a template variable, and we never had it. Owning generation is the
@@ -74,7 +75,8 @@ class OtpService:
         await self._enforce_cooldown(destination, purpose)
         await self._enforce_rate_limits(destination, ip_address)
 
-        code = f"{secrets.randbelow(10 ** self._settings.message_central_otp_length):0{self._settings.message_central_otp_length}d}"
+        length = self._settings.otp_length
+        code = f"{secrets.randbelow(10**length):0{length}d}"
         expires_at = datetime.now(UTC) + timedelta(seconds=self._settings.otp_ttl_seconds)
 
         # Supersede first: a resend must invalidate the previous code, otherwise

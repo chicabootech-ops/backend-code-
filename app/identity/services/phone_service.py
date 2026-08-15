@@ -1,10 +1,12 @@
 """Phone number verification.
 
-The OTP is now **issued by us**, not by Message Central VerifyNow. That change is
-what makes WhatsApp-primary delivery possible: WhatsApp needs the code as a
-template variable, and VerifyNow never exposed it. One code is generated, hashed
-into `identity.otp_challenges`, and the same code goes out over WhatsApp and — if
-and only if WhatsApp definitively fails — over SMS.
+The OTP is **issued and verified by us**, never by the SMS vendor. One code is
+generated, hashed into `identity.otp_challenges`, and handed to the notification
+layer for delivery. Verification matches the submitted code against that hash, so
+it keeps working even when the vendor does not.
+
+Delivery currently goes out over SMS via MSG91. Which transport carries it is not
+this module's concern — it calls `NotificationService.send` and reads the outcome.
 
 It also removes a hard dependency: the challenge used to live only in Redis, so
 this endpoint 503'd whenever Redis blipped. It is in Postgres now.
@@ -31,12 +33,10 @@ from app.identity.core.redis.client import (
 )
 from app.identity.core.redis.keys import PHONE_VERIFY_FIELD, bundle_user_key
 from app.identity.core.validation import validate_phone
-from app.identity.integrations.message_central import MessageCentralClient
 from app.identity.repositories.user_repository import UserRepository
 from app.identity.schemas.common import MessageResponse
 from app.identity.services.rate_limit_service import RateLimitService, by_user
 from app.notifications.otp_service import OtpError, OtpService
-from app.notifications.service import NotificationService
 from app.notifications.types import NotificationType
 
 #: Purpose recorded on the challenge; also scopes the resend cooldown.
@@ -61,17 +61,16 @@ class PhoneService:
         settings: Settings,
         redis: RedisClient,
         rate_limit: RateLimitService,
-        sms: MessageCentralClient,
         notifications_factory=None,
     ) -> None:
         self._settings = settings
         self._redis = redis
         self._rate_limit = rate_limit
-        #: Retained so `configured` still reflects Message Central credentials,
-        #: and so the legacy VerifyNow client stays reachable if ever needed.
-        self._sms = sms
         #: Callable(session) -> NotificationService. Injected so the identity
-        #: layer does not have to know how providers are wired.
+        #: layer does not have to know how providers are wired. Note there is no
+        #: provider handle here any more: which transport carries the code is the
+        #: notification layer's business, and holding a vendor client here is
+        #: what previously let an SMS-specific check block every OTP.
         self._notifications_factory = notifications_factory
 
     async def send_otp(
@@ -81,18 +80,11 @@ class PhoneService:
         *,
         phone: str | None,
     ) -> MessageResponse:
-        # A phone OTP can ride either channel, so refuse only when *neither* can
-        # carry it. Gating on Message Central alone was a VerifyNow leftover: it
-        # rejects every OTP in a WhatsApp-only deployment, and it short-circuits
-        # ahead of the notification ladder — which is why the fallback logic
-        # below could never run while SMS credentials were missing.
-        if not (self._settings.whatsapp_configured or self._sms.configured):
-            raise AppError(
-                "Phone verification is not configured yet.",
-                code="phone_channel_not_configured",
-                status_code=503,
-            )
-
+        # No provider pre-flight check here, deliberately. Two earlier versions
+        # of this guard blocked every OTP because they asked one vendor's client
+        # whether *it* was configured, which is a question this layer should not
+        # be asking. If nothing can carry the code the ladder reports a definitive
+        # failure below, and that is the honest place for it to surface.
         await self._rate_limit.check_rules(
             [
                 by_user(
@@ -113,12 +105,12 @@ class PhoneService:
         if not target:
             raise ValidationError("Phone number is required", code="phone_required")
 
-        national = _digits_only_national(target, self._settings.message_central_country_code)
+        national = _digits_only_national(target, self._settings.sms_country_code)
         if len(national) != 10:
             raise ValidationError("Invalid Indian mobile number", code="invalid_phone")
 
         # Persist phone on user (unverified until OTP succeeds)
-        e164_like = f"+{self._settings.message_central_country_code}{national}"
+        e164_like = f"+{self._settings.sms_country_code}{national}"
         if user.phone != e164_like and user.phone != national:
             user.phone = e164_like
             user.phone_verified = False
@@ -142,12 +134,11 @@ class PhoneService:
         if notifications is None:
             raise AppError(
                 "Phone verification is not configured yet.",
-                code="sms_not_configured",
+                code="phone_channel_not_configured",
                 status_code=503,
             )
 
-        # WhatsApp first, SMS only on a definitive WhatsApp failure. The
-        # challenge id is the idempotency key, so a double-submit cannot send
+        # The challenge id is the idempotency key, so a double-submit cannot send
         # the same code twice.
         outcome = await notifications.send(
             NotificationType.OTP_PHONE_VERIFY,
@@ -179,6 +170,23 @@ class PhoneService:
 
         return MessageResponse(message="OTP sent to your phone number.")
 
+    async def resend_otp(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        *,
+        phone: str | None = None,
+    ) -> MessageResponse:
+        """Issue and send a fresh code for a number already in flight.
+
+        This is `send_otp` by another name and that is deliberate — resend is not
+        a separate path. `OtpService.issue` supersedes the previous challenge, so
+        the old code stops working the moment a new one goes out, and the resend
+        cooldown plus the hourly cap are enforced there rather than here. Giving
+        resend its own logic is how two live codes for one number happen.
+        """
+        return await self.send_otp(session, user_id, phone=phone)
+
     async def verify_otp(
         self,
         session: AsyncSession,
@@ -186,12 +194,11 @@ class PhoneService:
         *,
         otp: str,
     ) -> MessageResponse:
-        # No provider check here, deliberately. Verification is entirely local
-        # now — the code is matched against the Argon2 hash in
-        # identity.otp_challenges. Gating it on Message Central was correct only
-        # while VerifyNow validated the code for us; keeping it would reject a
-        # perfectly good code whenever the SMS provider happened to be
-        # unconfigured or down.
+        # No provider check here, deliberately. Verification is entirely local —
+        # the code is matched against the Argon2 hash in identity.otp_challenges.
+        # A vendor gate here would reject a perfectly good code whenever the SMS
+        # provider happened to be unconfigured or down, which is exactly the trap
+        # a provider-validated OTP product puts you in.
         await self._rate_limit.check_rules(
             [
                 by_user(

@@ -57,21 +57,26 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_pass: str = ""
 
-    # Message Central. The same account serves two products:
-    #   VerifyNow  — provider-generated OTP (legacy; retained but no longer used
-    #                for OTP because it never exposes the code to us, which makes
-    #                "same OTP on WhatsApp and SMS" impossible)
-    #   Message Now — plain SMS send, used as the OTP/transactional SMS fallback
-    message_central_customer_id: str = ""
-    message_central_email: str = ""
-    message_central_password: str = ""
-    message_central_country_code: str = "91"
-    message_central_otp_length: int = 6
-    #: Message Now sender id (6-char alphanumeric header approved by the DLT registry).
-    message_central_sender_id: str = ""
-    #: Message Now send path. Configurable because the account's product tier
-    #: determines the endpoint; confirm against your Message Central dashboard.
-    message_central_sms_path: str = "/verification/v3/send"
+    # MSG91 — the SMS transport. Sends via the Flow API, which renders a
+    # DLT-registered template from named variables on MSG91's side.
+    #
+    # MSG91's OTP product is deliberately not used: it would generate and
+    # validate the code itself, which is precisely what made the previous
+    # provider a dead end. We issue and verify our own codes.
+    msg91_enabled: bool = True
+    msg91_auth_key: str = ""
+    #: Default DLT-registered template. Per-notification ids override this via
+    #: ops.notification_templates.provider_template_id.
+    msg91_template_id: str = ""
+    #: 6-char alphanumeric header approved by the DLT registry.
+    msg91_sender_id: str = ""
+    msg91_base_url: str = "https://control.msg91.com"
+    msg91_flow_path: str = "/api/v5/flow"
+
+    #: Provider-agnostic phone settings. These were previously namespaced under
+    #: the SMS vendor, which meant swapping vendors touched unrelated call sites.
+    sms_country_code: str = "91"
+    otp_length: int = 6
 
     # --- WhatsApp Business Platform (Meta Cloud API) -------------------------
     # Server-side only. WHATSAPP_ACCESS_TOKEN and WHATSAPP_APP_SECRET must never
@@ -90,15 +95,14 @@ class Settings(BaseSettings):
     whatsapp_default_language: str = "en"
 
     # --- Channel policy ------------------------------------------------------
-    notification_primary_provider: str = "whatsapp"
-    message_central_enabled: bool = True
+    notification_primary_provider: str = "msg91"
 
-    # SMS (Message Central) is the only live phone channel. These defaults used
-    # to be "whatsapp", which meant any deployment that did not explicitly set
-    # the env vars sent every OTP to WhatsApp first — where no template is
-    # approved, so it failed and burned ~2s before falling back. Defaulting to
-    # the channel that actually works keeps a missing env var from routing to a
-    # dead one. Flip back to "whatsapp" once Meta approves the templates.
+    # SMS is the only live phone channel. These defaults used to be "whatsapp",
+    # which meant any deployment that did not explicitly set the env vars sent
+    # every OTP to WhatsApp first — where no template is approved, so it failed
+    # and burned ~2s before falling back. Defaulting to the channel that actually
+    # works keeps a missing env var from routing to a dead one. Flip back to
+    # "whatsapp" once the business is verified and Meta approves the templates.
     otp_primary_channel: str = "sms"
     otp_fallback_channel: str = "sms"
     #: No fallback: SMS is both primary and the only option, and attempting a
