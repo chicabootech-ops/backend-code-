@@ -81,10 +81,15 @@ class PhoneService:
         *,
         phone: str | None,
     ) -> MessageResponse:
-        if not self._sms.configured:
+        # A phone OTP can ride either channel, so refuse only when *neither* can
+        # carry it. Gating on Message Central alone was a VerifyNow leftover: it
+        # rejects every OTP in a WhatsApp-only deployment, and it short-circuits
+        # ahead of the notification ladder — which is why the fallback logic
+        # below could never run while SMS credentials were missing.
+        if not (self._settings.whatsapp_configured or self._sms.configured):
             raise AppError(
-                "Phone verification is not configured yet. Add Message Central credentials.",
-                code="sms_not_configured",
+                "Phone verification is not configured yet.",
+                code="phone_channel_not_configured",
                 status_code=503,
             )
 
