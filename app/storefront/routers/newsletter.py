@@ -28,3 +28,12 @@ async def confirm(
     token: str = Query(min_length=20, max_length=200),
 ) -> dict[str, str]:
     return await service.confirm(token)
+
+
+@router.get("/unsubscribe", response_model=NewsletterResult)
+async def unsubscribe(
+    service: NewsletterServiceDep,
+    token: str = Query(min_length=20, max_length=200),
+) -> dict[str, str]:
+    """Public and unauthenticated — a marketing footer links straight here."""
+    return await service.unsubscribe(token)

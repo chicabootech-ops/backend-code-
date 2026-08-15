@@ -68,3 +68,37 @@ class NewsletterService:
             return {"status": "invalid", "message": "This confirmation link is invalid or expired."}
         await get_event_bus().publish(EventType.NEWSLETTER_SUBSCRIBED, {})
         return {"status": "confirmed", "message": "Your newsletter subscription is confirmed."}
+
+    async def unsubscribe(self, token: str) -> dict[str, str]:
+        """One-click opt-out from a marketing email footer.
+
+        Requires no login and asks no questions on purpose: an unsubscribe that
+        makes someone sign in first is an unsubscribe that fails, and a failed
+        unsubscribe becomes a spam complaint.
+
+        Idempotent — clicking twice, or a mail client prefetching the link, must
+        not look like an error. The row is kept rather than deleted so a later
+        resubscribe cannot silently resume mail to someone who opted out.
+        """
+        result = await self._session.execute(
+            text(
+                """
+                UPDATE commerce.newsletter_subscribers
+                   SET status = 'unsubscribed',
+                       unsubscribed_at = COALESCE(unsubscribed_at, NOW()),
+                       updated_at = NOW()
+                 WHERE unsubscribe_token = :token
+             RETURNING email
+                """
+            ),
+            {"token": token},
+        )
+        if not result.first():
+            return {
+                "status": "invalid",
+                "message": "This unsubscribe link is not valid.",
+            }
+        return {
+            "status": "unsubscribed",
+            "message": "You have been unsubscribed. You will not receive further marketing email.",
+        }
