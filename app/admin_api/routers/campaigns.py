@@ -44,7 +44,7 @@ async def send_test(
 ) -> None:
     """Send one copy to a chosen address before committing to the list."""
     await service.send_test(
-        subject=payload.subject, body_html=payload.body_html, to_email=payload.to_email
+        subject=payload.subject, body=payload.body, to_email=payload.to_email
     )
 
 
@@ -59,7 +59,7 @@ async def send_campaign(
     return await service.create_and_send(
         name=payload.name,
         subject=payload.subject,
-        body_html=payload.body_html,
+        body=payload.body,
         admin_id=admin.sub,
         ip_address=_ip(request),
     )

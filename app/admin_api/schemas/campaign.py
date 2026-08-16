@@ -24,7 +24,9 @@ class CampaignOut(BaseModel):
 class CampaignSendRequest(BaseModel):
     name: str = Field(default="", max_length=200)
     subject: str = Field(min_length=1, max_length=200)
-    body_html: str = Field(min_length=1, max_length=100_000)
+    #: Plain text as the admin typed it. The server renders the HTML — asking an
+    #: admin for markup is how a stray "<" broke the email.
+    body: str = Field(min_length=1, max_length=100_000)
 
 
 class CampaignTestRequest(CampaignSendRequest):

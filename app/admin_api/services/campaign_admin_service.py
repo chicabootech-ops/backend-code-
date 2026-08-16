@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 import uuid
 
 from sqlalchemy import text
@@ -39,6 +40,38 @@ logger = logging.getLogger(__name__)
 #: of a damaged sending reputation.
 _BATCH_SIZE = 20
 _BATCH_PAUSE_SECONDS = 1.0
+
+
+_URL_RE = re.compile(r"(https?://[^\s<]+)")
+
+
+def render_body(text_body: str) -> str:
+    """Turn what an admin actually typed into email-safe HTML.
+
+    Admins write a message, not markup. Asking for HTML meant a stray `<` broke
+    the layout and a plain-text paragraph arrived as one unbroken run of words.
+
+    Everything is escaped first, so nothing a user types can inject markup; then
+    blank lines become paragraphs, single newlines become line breaks, and bare
+    URLs become links. Inline styles rather than a stylesheet, because email
+    clients strip `<style>` blocks.
+    """
+    escaped = html.escape(text_body.strip())
+    escaped = _URL_RE.sub(
+        lambda m: f'<a href="{m.group(1)}" style="color:#946a2b">{m.group(1)}</a>', escaped
+    )
+    paragraphs = [block.strip() for block in re.split(r"\n\s*\n", escaped) if block.strip()]
+    body = "".join(
+        f'<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#2b2724">'
+        f'{block.replace(chr(10), "<br>")}</p>'
+        for block in paragraphs
+    )
+    return (
+        '<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;'
+        'padding:32px 24px;background:#faf7f4;color:#2b2724">'
+        f"{body}"
+        "</div>"
+    )
 
 
 def _unsubscribe_footer(token: str) -> str:
@@ -94,17 +127,17 @@ class CampaignAdminService:
     # ------------------------------------------------------------------ #
     # Sending
     # ------------------------------------------------------------------ #
-    async def send_test(self, *, subject: str, body_html: str, to_email: str) -> None:
+    async def send_test(self, *, subject: str, body: str, to_email: str) -> None:
         """Send one copy to an address of the admin's choosing.
 
         The footer is rendered with a dummy token so the layout matches a real
         send without handing out a working unsubscribe link for someone else.
         """
-        self._validate(subject, body_html)
+        self._validate(subject, body)
         await self._email._send(  # noqa: SLF001
             to_email=to_email.strip(),
             subject=f"[TEST] {subject}",
-            html=body_html + _unsubscribe_footer("test-token-not-valid"),
+            html=render_body(body) + _unsubscribe_footer("test-token-not-valid"),
             required=True,
         )
 
@@ -113,11 +146,14 @@ class CampaignAdminService:
         *,
         name: str,
         subject: str,
-        body_html: str,
+        body: str,
         admin_id: uuid.UUID,
         ip_address: str | None = None,
     ) -> CampaignSendResult:
-        self._validate(subject, body_html)
+        self._validate(subject, body)
+        # Rendered once, not per recipient — the output is identical for
+        # everyone and only the footer varies.
+        body_html = render_body(body)
 
         recipients = (
             await self._session.execute(
@@ -193,6 +229,12 @@ class CampaignAdminService:
             ),
             {"id": campaign_id, "sent": sent, "failed": failed},
         )
+        # Committed before the audit entry, deliberately. Mail has already left;
+        # the record of how many and to whom must survive even if a later write
+        # fails. Getting this order wrong is what left campaigns stuck in
+        # 'running' with their counters rolled back.
+        await self._session.commit()
+
         await self._audit.log(
             admin_id=admin_id,
             entity_type="notification_campaign",
@@ -214,12 +256,8 @@ class CampaignAdminService:
         )
 
     @staticmethod
-    def _validate(subject: str, body_html: str) -> None:
+    def _validate(subject: str, body: str) -> None:
         if not subject.strip():
             raise ValidationError("Give the email a subject.")
-        if not body_html.strip():
-            raise ValidationError("The email body is empty.")
-        # Guard against a body pasted as plain text with markup characters in it,
-        # which would render as broken HTML rather than the intended message.
-        if "<" not in body_html and html.escape(body_html) != body_html:
-            raise ValidationError("The body looks like plain text with stray markup.")
+        if not body.strip():
+            raise ValidationError("The message is empty.")
