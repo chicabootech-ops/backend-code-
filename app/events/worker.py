@@ -64,3 +64,4 @@ class EventWorker:
             except Exception:  # noqa: BLE001
                 logger.exception("Event worker loop failed; backing off")
                 await asyncio.sleep(ERROR_BACKOFF_SECONDS)
+                continue

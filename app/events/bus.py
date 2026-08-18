@@ -15,7 +15,7 @@ import logging
 from typing import Any
 
 from redis.asyncio import Redis
-from redis.exceptions import ResponseError
+from redis.exceptions import ResponseError, TimeoutError as RedisTimeoutError
 
 from app.events.types import Event, EventType
 
@@ -84,6 +84,9 @@ class EventBus:
             response = await self._redis.xreadgroup(
                 group, consumer, {STREAM_KEY: ">"}, count=count, block=block_ms
             )
+        except RedisTimeoutError:
+            logger.warning("Redis stream read timed out; disabling event bus for this cycle")
+            return []
         except ResponseError as exc:
             if "NOGROUP" in str(exc):
                 await self.ensure_group(group)
