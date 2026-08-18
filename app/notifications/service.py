@@ -77,8 +77,8 @@ class SendOutcome:
 
     @property
     def failed(self) -> bool:
-        """True only for a definitive failure. UNKNOWN is deliberately not one."""
-        return self.status is DeliveryStatus.FAILED
+        """True when nothing real was sent, including an unset status."""
+        return self.status is None or self.status is DeliveryStatus.FAILED
 
 
 class NotificationService:

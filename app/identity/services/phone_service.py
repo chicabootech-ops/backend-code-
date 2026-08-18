@@ -125,7 +125,7 @@ class PhoneService:
         )
 
         # 503 not 502: Cloudflare replaces a 502/504 body with its own error page.
-        if outcome.failed:
+        if outcome.failed or outcome.status is None:
             await otp_service.supersede(challenge.id)
             raise AppError(
                 "We could not send your verification code right now. Please try again.",

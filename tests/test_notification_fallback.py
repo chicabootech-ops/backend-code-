@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.notifications.providers.whatsapp import WhatsAppProvider
+from app.notifications.service import SendOutcome
 from app.notifications.types import (
     Category,
     Channel,
@@ -257,3 +258,8 @@ def test_unconfigured_whatsapp_fails_permanently_rather_than_unknown():
     r = provider._fail("whatsapp_not_configured", "nope", ErrorClass.PERMANENT)
     assert r.status is DeliveryStatus.FAILED
     assert r.should_retry is False
+
+
+def test_missing_delivery_status_counts_as_failure():
+    outcome = SendOutcome(notification_id=None, status=None)
+    assert outcome.failed is True

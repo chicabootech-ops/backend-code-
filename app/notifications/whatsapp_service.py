@@ -153,7 +153,7 @@ class WhatsAppService:
             otp_challenge_id=challenge.id,
         )
 
-        if outcome.failed:
+        if outcome.failed or outcome.status is None:
             # Retire the challenge so the resend cooldown does not punish the
             # customer for our failure to deliver.
             await self._otp.supersede(challenge.id)
