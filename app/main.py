@@ -127,9 +127,9 @@ async def lifespan(app: FastAPI):
         protocol=2,
         health_check_interval=30,
         socket_keepalive=True,
-        socket_connect_timeout=2,
-        socket_timeout=2,
-        retry=Retry(ExponentialBackoff(cap=0.25, base=0.05), retries=1),
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry=Retry(ExponentialBackoff(cap=1.0, base=0.25), retries=2),
         retry_on_error=[RedisConnectionError, RedisTimeoutError],
     )
     redis_client = RedisClient(redis_raw)
