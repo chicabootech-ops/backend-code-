@@ -31,6 +31,11 @@ def validate_phone(phone: str) -> str:
     return normalized
 
 
+def to_e164(phone: str, country_code: str = "91") -> str:
+    """Validate an Indian mobile and return it as +<cc><national>."""
+    return f"+{country_code}{validate_phone(phone)}"
+
+
 def validate_pincode(pincode: str) -> str:
     pin = pincode.strip()
     if not INDIAN_PINCODE_RE.match(pin):

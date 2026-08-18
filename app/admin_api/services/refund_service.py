@@ -25,10 +25,16 @@ logger = logging.getLogger(__name__)
 
 
 class RefundService:
-    def __init__(self, session: AsyncSession, razorpay: RazorpayClient | None = None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        razorpay: RazorpayClient | None = None,
+        notifications_factory=None,
+    ) -> None:
         self._session = session
         self._audit = AuditRepository(session)
         self._razorpay = razorpay or RazorpayClient(settings)
+        self._notifications_factory = notifications_factory
 
     async def refund_order(
         self,
@@ -129,6 +135,12 @@ class RefundService:
             },
         )
 
+        await self._notify_refund(
+            order_id=order_id,
+            amount_paise=amount,
+            settled=result.get("status") == "processed",
+        )
+
         return {
             "refund_id": refund_id,
             "provider_refund_id": result.get("id"),
@@ -136,6 +148,36 @@ class RefundService:
             "status": result.get("status", "pending"),
             "full_refund": full_refund,
         }
+
+    async def _notify_refund(
+        self, *, order_id: uuid.UUID, amount_paise: int, settled: bool
+    ) -> None:
+        if self._notifications_factory is None:
+            return
+        from app.notifications.order_notifier import OrderNotifier
+
+        order_number = (
+            await self._session.execute(
+                text("SELECT order_number FROM commerce.orders WHERE id = :oid"),
+                {"oid": order_id},
+            )
+        ).scalar_one_or_none()
+        if order_number is None:
+            return
+
+        notifier = OrderNotifier(
+            self._session,
+            settings,
+            notifications=self._notifications_factory(self._session),
+        )
+        if settled:
+            await notifier.refund_completed(
+                order_id=order_id, order_number=order_number, amount_paise=amount_paise
+            )
+        else:
+            await notifier.refund_initiated(
+                order_id=order_id, order_number=order_number, amount_paise=amount_paise
+            )
 
     async def _order_status(self, order_id: uuid.UUID) -> str:
         result = await self._session.execute(

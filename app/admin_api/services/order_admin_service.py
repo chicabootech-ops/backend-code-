@@ -69,10 +69,11 @@ def _order_out(
 
 
 class OrderAdminService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, notifications_factory=None) -> None:
         self._session = session
         self._repo = OrderRepository(session)
         self._audit = AuditRepository(session)
+        self._notifications_factory = notifications_factory
 
     async def _items_by_order(
         self, order_ids: list[uuid.UUID]
@@ -138,7 +139,14 @@ class OrderAdminService:
         if not order:
             raise NotFoundError("Order not found")
 
-        updated = await self._repo.update_status(order_id, payload.status, payload.note)
+        previous_status = order.status
+        updated = await self._repo.update_status(
+            order_id,
+            payload.status,
+            payload.note,
+            tracking_number=payload.tracking_number,
+            courier=payload.courier,
+        )
         if not updated:
             raise NotFoundError("Order not found")
 
@@ -147,14 +155,43 @@ class OrderAdminService:
             entity_type="order",
             entity_id=order_id,
             action="status_update",
-            old_data={"status": order.status},
-            new_data={"status": payload.status, "note": payload.note},
+            old_data={"status": previous_status},
+            new_data={
+                "status": payload.status,
+                "note": payload.note,
+                "tracking_number": payload.tracking_number,
+                "courier": payload.courier,
+            },
             domain="order",
             target_user_id=order.user_id,
             ip_address=ip_address,
         )
+        await self._session.commit()
+
+        if previous_status != payload.status:
+            await self._notify_status(updated, payload)
+
         tracking = await self._repo.get_tracking(order_id)
         return _order_out(updated, tracking)
+
+    async def _notify_status(self, order: Order, payload: OrderStatusUpdate) -> None:
+        if self._notifications_factory is None:
+            return
+        from app.config import settings
+        from app.notifications.order_notifier import OrderNotifier
+
+        notifier = OrderNotifier(
+            self._session, settings, notifications=self._notifications_factory(self._session)
+        )
+        metadata = order.metadata_ or {}
+        await notifier.status_changed(
+            order_id=order.id,
+            order_number=order.order_number,
+            status=payload.status,
+            tracking_number=payload.tracking_number or metadata.get("tracking_number") or "",
+            courier=payload.courier or metadata.get("courier") or "",
+            reason=payload.note or "",
+        )
 
     async def track(self, order_id: uuid.UUID) -> AdminOrderOut:
         return await self.get_order(order_id)

@@ -97,6 +97,7 @@ class PaymentService:
         *,
         razorpay: RazorpayClient,
         email_service: Any | None = None,
+        notifications_factory=None,
     ) -> None:
         self._session = session
         self._orders = OrderRepository(session)
@@ -110,6 +111,7 @@ class PaymentService:
         self._coupons = CouponService(session)
         self._razorpay = razorpay
         self._email = email_service
+        self._notifications_factory = notifications_factory
 
     # ------------------------------------------------------------------ #
     # 1. Checkout
@@ -848,7 +850,27 @@ class PaymentService:
                     "reason": failure_code or failure_reason or "unknown",
                 },
             )
+            notifier = self._notifier()
+            if notifier is not None:
+                await notifier.payment_failed(
+                    order_id=order.id,
+                    order_number=order.order_number,
+                    retry_url=(
+                        f"{settings.site_url.rstrip('/')}/orders/{order.order_number}"
+                    ),
+                )
         return False
+
+    def _notifier(self):
+        if self._notifications_factory is None:
+            return None
+        from app.notifications.order_notifier import OrderNotifier
+
+        return OrderNotifier(
+            self._session,
+            settings,
+            notifications=self._notifications_factory(self._session),
+        )
 
     async def _settle_order(self, order: Order, payment: Payment) -> bool:
         """Once-only consequences of money actually arriving.
@@ -912,7 +934,20 @@ class PaymentService:
     # Post-settlement (external I/O, after commit)
     # ------------------------------------------------------------------ #
     async def _after_settlement(self, order: Order) -> None:
-        """Invoice + confirmation email. Runs after commit; never raises."""
+        """Invoice, confirmation email and WhatsApp updates. Never raises."""
+        notifier = self._notifier()
+        if notifier is not None:
+            await notifier.order_confirmed(
+                order_id=order.id,
+                order_number=order.order_number,
+                total_paise=order.grand_total_paise,
+            )
+            await notifier.payment_confirmed(
+                order_id=order.id,
+                order_number=order.order_number,
+                amount_paise=order.grand_total_paise,
+            )
+
         # Claim the send slot first. If this returns None someone already sent
         # the confirmation, so a redelivered webhook stays silent (Case 8).
         to_email = order.guest_email or await self._user_email(order.user_id)

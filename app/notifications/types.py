@@ -2,13 +2,13 @@
 
 The distinction this module exists to enforce is **acceptance is not delivery**.
 A provider returning HTTP 200 means it took the request, nothing more. Treating
-that as delivered is what makes fallback logic lie: it either suppresses a needed
-SMS, or sends a duplicate one for a message that actually arrived.
+that as delivered is what makes the retry ladder lie: it either abandons a
+message that never arrived, or sends a second copy of one that did.
 
 So `DeliveryStatus` is a ladder, and `ErrorClass` decides what a caller may do:
 
-    PERMANENT  -> fall back to the next channel, once
-    TRANSIENT  -> retry the same channel with backoff
+    PERMANENT  -> stop; this will never work for this recipient
+    TRANSIENT  -> retry on WhatsApp with backoff
     UNKNOWN    -> reconcile; never assume failure, the message may have arrived
 """
 
@@ -20,14 +20,17 @@ from typing import Any
 
 
 class Channel(StrEnum):
+    """Delivery channels. Only WHATSAPP has a registered provider."""
+
     WHATSAPP = "whatsapp"
     SMS = "sms"
     EMAIL = "email"
 
 
 class Provider(StrEnum):
+    """Concrete vendors. Retired ones are absent — the column is read as text."""
+
     WHATSAPP = "whatsapp"
-    MSG91 = "msg91"
     RESEND = "resend"
     SMTP = "smtp"
 
@@ -62,9 +65,9 @@ TERMINAL_FAILURE = frozenset({DeliveryStatus.FAILED})
 
 
 class ErrorClass(StrEnum):
-    #: Temporary — same channel, retry with backoff.
+    #: Temporary — retry with backoff.
     TRANSIENT = "transient"
-    #: Definitive — this channel will never work for this recipient/message.
+    #: Definitive — this will never work for this recipient/message.
     PERMANENT = "permanent"
     #: We do not know. Reconcile; do not treat as failure.
     UNKNOWN = "unknown"
@@ -82,6 +85,8 @@ class NotificationType(StrEnum):
 
     # --- order lifecycle ---
     ORDER_CONFIRMED = "ORDER_CONFIRMED"
+    ORDER_PROCESSING = "ORDER_PROCESSING"
+    ORDER_PACKED = "ORDER_PACKED"
     PAYMENT_CONFIRMED = "PAYMENT_CONFIRMED"
     PAYMENT_FAILED = "PAYMENT_FAILED"
     ORDER_SHIPPED = "ORDER_SHIPPED"
@@ -100,8 +105,25 @@ class NotificationType(StrEnum):
     EXCHANGE_CREATED = "EXCHANGE_CREATED"
     EXCHANGE_COMPLETED = "EXCHANGE_COMPLETED"
 
+    # --- abandoned cart ---
+    # Three rungs rather than one type, because each is a separate Meta template
+    # with its own approved copy, and the ladder must be able to tell which rung
+    # a customer already received.
+    CART_REMINDER_FIRST = "CART_REMINDER_FIRST"
+    CART_REMINDER_SECOND = "CART_REMINDER_SECOND"
+    CART_REMINDER_COUPON = "CART_REMINDER_COUPON"
+
     # --- marketing ---
     MARKETING_BROADCAST = "MARKETING_BROADCAST"
+    WELCOME_OFFER = "WELCOME_OFFER"
+    FIRST_PURCHASE_COUPON = "FIRST_PURCHASE_COUPON"
+    FESTIVAL_SALE = "FESTIVAL_SALE"
+    FLASH_SALE = "FLASH_SALE"
+    LIMITED_OFFER = "LIMITED_OFFER"
+    NEW_COLLECTION = "NEW_COLLECTION"
+    COUPON_EXPIRING = "COUPON_EXPIRING"
+    PRICE_DROP = "PRICE_DROP"
+    RESTOCKED_ITEM = "RESTOCKED_ITEM"
 
 
 #: Which notification types are OTP. These get the authentication template
@@ -116,16 +138,54 @@ OTP_TYPES = frozenset(
     }
 )
 
-MARKETING_TYPES = frozenset({NotificationType.MARKETING_BROADCAST})
+#: Cart reminders. Meta classifies these as MARKETING templates, and they are
+#: consent-gated — but on their own preference flag, because a customer who wants
+#: order updates and no promos may still want to be told they left something in
+#: the basket. Kept out of MARKETING_TYPES so the two consents stay independent.
+CART_TYPES = frozenset(
+    {
+        NotificationType.CART_REMINDER_FIRST,
+        NotificationType.CART_REMINDER_SECOND,
+        NotificationType.CART_REMINDER_COUPON,
+    }
+)
+
+MARKETING_TYPES = frozenset(
+    {
+        NotificationType.MARKETING_BROADCAST,
+        NotificationType.WELCOME_OFFER,
+        NotificationType.FIRST_PURCHASE_COUPON,
+        NotificationType.FESTIVAL_SALE,
+        NotificationType.FLASH_SALE,
+        NotificationType.LIMITED_OFFER,
+        NotificationType.NEW_COLLECTION,
+        NotificationType.COUPON_EXPIRING,
+        NotificationType.PRICE_DROP,
+        NotificationType.RESTOCKED_ITEM,
+    }
+)
 
 
 def category_for(notification_type: NotificationType | str) -> Category:
     value = NotificationType(notification_type)
     if value in OTP_TYPES:
         return Category.OTP
-    if value in MARKETING_TYPES:
+    if value in MARKETING_TYPES or value in CART_TYPES:
         return Category.MARKETING
     return Category.TRANSACTIONAL
+
+
+#: Which `public.user_preferences` column gates each category. Transactional and
+#: OTP are service messages and are not gated at all — a customer who placed an
+#: order asked for its updates.
+def consent_column_for(notification_type: NotificationType | str) -> str | None:
+    """Return the consent column that must be TRUE, or None if ungated."""
+    value = NotificationType(notification_type)
+    if value in CART_TYPES:
+        return "whatsapp_abandoned_cart"
+    if value in MARKETING_TYPES:
+        return "whatsapp_marketing"
+    return None
 
 
 @dataclass(slots=True)
@@ -178,15 +238,6 @@ class ProviderResult:
             DeliveryStatus.DELIVERED,
             DeliveryStatus.READ,
         }
-
-    @property
-    def should_fall_back(self) -> bool:
-        """Only a definitive failure earns a fallback.
-
-        A timeout must not: the message may well have been delivered, and
-        sending the SMS anyway is the duplicate we are trying to avoid.
-        """
-        return self.status is DeliveryStatus.FAILED and self.error_class is ErrorClass.PERMANENT
 
     @property
     def should_retry(self) -> bool:

@@ -1,16 +1,4 @@
-"""Phone number verification.
-
-The OTP is **issued and verified by us**, never by the SMS vendor. One code is
-generated, hashed into `identity.otp_challenges`, and handed to the notification
-layer for delivery. Verification matches the submitted code against that hash, so
-it keeps working even when the vendor does not.
-
-Delivery currently goes out over SMS via MSG91. Which transport carries it is not
-this module's concern — it calls `NotificationService.send` and reads the outcome.
-
-It also removes a hard dependency: the challenge used to live only in Redis, so
-this endpoint 503'd whenever Redis blipped. It is in Postgres now.
-"""
+"""Phone number verification. Codes are issued and verified locally, sent over WhatsApp."""
 
 from __future__ import annotations
 
@@ -39,8 +27,8 @@ from app.identity.services.rate_limit_service import RateLimitService, by_user
 from app.notifications.otp_service import OtpError, OtpService
 from app.notifications.types import NotificationType
 
-#: Purpose recorded on the challenge; also scopes the resend cooldown.
-OTP_PURPOSE_PHONE_VERIFY = "phone_verify"
+#: Shared with the public /api/v1/auth router so one code works on both.
+OTP_PURPOSE_PHONE_VERIFY = "PHONE_VERIFICATION"
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +54,6 @@ class PhoneService:
         self._settings = settings
         self._redis = redis
         self._rate_limit = rate_limit
-        #: Callable(session) -> NotificationService. Injected so the identity
-        #: layer does not have to know how providers are wired. Note there is no
-        #: provider handle here any more: which transport carries the code is the
-        #: notification layer's business, and holding a vendor client here is
-        #: what previously let an SMS-specific check block every OTP.
         self._notifications_factory = notifications_factory
 
     async def send_otp(
@@ -80,11 +63,6 @@ class PhoneService:
         *,
         phone: str | None,
     ) -> MessageResponse:
-        # No provider pre-flight check here, deliberately. Two earlier versions
-        # of this guard blocked every OTP because they asked one vendor's client
-        # whether *it* was configured, which is a question this layer should not
-        # be asking. If nothing can carry the code the ladder reports a definitive
-        # failure below, and that is the honest place for it to surface.
         await self._rate_limit.check_rules(
             [
                 by_user(
@@ -105,20 +83,18 @@ class PhoneService:
         if not target:
             raise ValidationError("Phone number is required", code="phone_required")
 
-        national = _digits_only_national(target, self._settings.sms_country_code)
+        national = _digits_only_national(target, self._settings.phone_country_code)
         if len(national) != 10:
             raise ValidationError("Invalid Indian mobile number", code="invalid_phone")
 
         # Persist phone on user (unverified until OTP succeeds)
-        e164_like = f"+{self._settings.sms_country_code}{national}"
+        e164_like = f"+{self._settings.phone_country_code}{national}"
         if user.phone != e164_like and user.phone != national:
             user.phone = e164_like
             user.phone_verified = False
             user.updated_at = datetime.now(UTC).replace(tzinfo=None)
             await session.flush()
 
-        # One code, generated and hashed by us. It is held in memory only long
-        # enough to hand to the notification layer.
         otp_service = OtpService(session, self._settings)
         try:
             challenge = await otp_service.issue(
@@ -138,8 +114,6 @@ class PhoneService:
                 status_code=503,
             )
 
-        # The challenge id is the idempotency key, so a double-submit cannot send
-        # the same code twice.
         outcome = await notifications.send(
             NotificationType.OTP_PHONE_VERIFY,
             recipient=e164_like,
@@ -150,16 +124,7 @@ class PhoneService:
             otp_challenge_id=challenge.id,
         )
 
-        # Every channel failed definitively. Reporting success here is how a
-        # dead SMS provider looks like a customer problem: the API says the code
-        # was sent, and nobody finds out otherwise until someone reads the logs.
-        # UNKNOWN is deliberately not treated as a failure — the message may well
-        # have arrived, and telling the user to retry would duplicate the code.
-        # 503, not 502. This is served through Vercel behind Cloudflare, and both
-        # layers read 502/504 as "the origin is broken" — Cloudflare drops the
-        # body and substitutes its own error page, so the customer sees a scary
-        # infrastructure notice instead of the sentence above. 503 says the same
-        # thing about the provider and is forwarded intact.
+        # 503 not 502: Cloudflare replaces a 502/504 body with its own error page.
         if outcome.failed:
             await otp_service.supersede(challenge.id)
             raise AppError(
@@ -177,14 +142,6 @@ class PhoneService:
         *,
         phone: str | None = None,
     ) -> MessageResponse:
-        """Issue and send a fresh code for a number already in flight.
-
-        This is `send_otp` by another name and that is deliberate — resend is not
-        a separate path. `OtpService.issue` supersedes the previous challenge, so
-        the old code stops working the moment a new one goes out, and the resend
-        cooldown plus the hourly cap are enforced there rather than here. Giving
-        resend its own logic is how two live codes for one number happen.
-        """
         return await self.send_otp(session, user_id, phone=phone)
 
     async def verify_otp(
@@ -194,11 +151,6 @@ class PhoneService:
         *,
         otp: str,
     ) -> MessageResponse:
-        # No provider check here, deliberately. Verification is entirely local —
-        # the code is matched against the Argon2 hash in identity.otp_challenges.
-        # A vendor gate here would reject a perfectly good code whenever the SMS
-        # provider happened to be unconfigured or down, which is exactly the trap
-        # a provider-validated OTP product puts you in.
         await self._rate_limit.check_rules(
             [
                 by_user(
@@ -220,8 +172,6 @@ class PhoneService:
                 code="otp_expired",
             )
 
-        # Verified against our own hashed challenge, not the provider's. Attempt
-        # counting, expiry and single-use all live in OtpService.
         otp_service = OtpService(session, self._settings)
         try:
             await otp_service.verify(
@@ -250,11 +200,6 @@ class PhoneService:
         return MessageResponse(message="Phone number verified successfully.")
 
     def _notifications(self, session: AsyncSession):
-        """Build the notification service for this request's session.
-
-        Injected as a factory rather than constructed here so the identity layer
-        stays unaware of which providers exist or how they are configured.
-        """
         if self._notifications_factory is None:
             return None
         return self._notifications_factory(session)

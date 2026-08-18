@@ -94,6 +94,7 @@ async def get_payment_service(request: Request, db: DbSession) -> PaymentService
         db,
         razorpay=RazorpayClient(settings),
         email_service=email_service,
+        notifications_factory=getattr(request.app.state, "build_notifications", None),
     )
 
 
@@ -113,8 +114,8 @@ async def get_review_service(db: DbSession) -> ReviewService:
     return ReviewService(db)
 
 
-async def get_return_service(db: DbSession) -> ReturnService:
-    return ReturnService(db)
+async def get_return_service(request: Request, db: DbSession) -> ReturnService:
+    return ReturnService(db, getattr(request.app.state, "build_notifications", None))
 
 
 async def get_newsletter_service(request: Request, db: DbSession) -> NewsletterService:

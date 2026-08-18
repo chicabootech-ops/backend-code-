@@ -18,10 +18,14 @@ from app.config import settings
 from app.db.session import create_engine, create_session_factory
 from app.events.bus import EventBus, set_event_bus
 from app.events.worker import EventWorker
-from app.notifications.providers.msg91 import Msg91Provider
+from app.notifications.admin_router import router as whatsapp_admin_router
+from app.notifications.auth_router import router as otp_auth_router
+from app.notifications.campaign_router import router as campaign_router
+from app.notifications.providers.whatsapp import WhatsAppProvider
 from app.notifications.router import router as whatsapp_webhook_router
 from app.notifications.service import NotificationService
 from app.notifications.types import Channel
+from app.notifications.workers import WorkerSupervisor
 from app.storefront.lib.catalog_cache import CatalogCache
 from app.storefront.lib.razorpay_client import RazorpayClient
 from app.storefront.workers.reconciliation_worker import ReconciliationWorker
@@ -29,7 +33,6 @@ from app.storefront.workers.reconciliation_worker import ReconciliationWorker
 from app.identity.core.exception_handlers import register_exception_handlers as register_identity_handlers
 from app.identity.core.redis.client import RedisClient
 from app.identity.core.security.jwt import JWTManager
-from app.identity.integrations.msg91 import Msg91Client
 from app.identity.integrations.r2.client import R2Client
 from app.identity.middleware.request_context import RequestContextMiddleware
 from app.identity.routers import (
@@ -157,19 +160,9 @@ async def lifespan(app: FastAPI):
         get_ttl_seconds=settings.avatar_get_url_ttl_seconds,
     )
     avatar_service = AvatarService(r2_client)
-    msg91_client = Msg91Client(settings)
 
-    # Notification providers. SMS via MSG91 is the only registered phone
-    # transport: WhatsApp needs a verified business and Meta-approved templates,
-    # and registering it unverified meant every OTP attempted a channel that
-    # could not deliver before falling through.
-    #
-    # `providers/whatsapp.py` is intact and unregistered, not deleted. To bring
-    # it back once Meta approves: add `Channel.WHATSAPP: WhatsAppProvider(settings)`
-    # here, set WHATSAPP_ENABLED=true, activate the template rows in
-    # ops.notification_templates, and set OTP_PRIMARY_CHANNEL=whatsapp.
     notification_providers = {
-        Channel.SMS: Msg91Provider(settings, msg91_client),
+        Channel.WHATSAPP: WhatsAppProvider(settings),
     }
 
     def build_notifications(session):
@@ -193,10 +186,11 @@ async def lifespan(app: FastAPI):
         logger.warning("ADMIN_JWT_SECRET is empty — set it in .env before deploying")
     elif len(settings.admin_jwt_secret) < 32 and settings.is_production:
         raise RuntimeError("ADMIN_JWT_SECRET must be at least 32 characters in production")
-    if not msg91_client.configured:
+    if not settings.whatsapp_configured:
         logger.error(
-            "MSG91 not configured — OTP cannot be delivered. Set MSG91_AUTH_KEY "
-            "and MSG91_TEMPLATE_ID"
+            "WhatsApp is not configured — no OTP or order update can be delivered. "
+            "Set WHATSAPP_ENABLED=true, WHATSAPP_ACCESS_TOKEN and "
+            "WHATSAPP_PHONE_NUMBER_ID"
         )
     if not settings.resend_api_key and not (
         settings.smtp_host and settings.smtp_user and settings.smtp_pass
@@ -215,6 +209,7 @@ async def lifespan(app: FastAPI):
     app.state.avatar_service = avatar_service
     app.state.phone_service = phone_service
     app.state.email_service = email_service
+    app.state.rate_limit_service = rate_limit_service
 
     event_bus = EventBus(redis_raw)
     set_event_bus(event_bus)
@@ -231,11 +226,19 @@ async def lifespan(app: FastAPI):
     await reconciliation_worker.start()
     app.state.reconciliation_worker = reconciliation_worker
 
+    notification_workers = WorkerSupervisor(
+        session_factory, settings, build_notifications=build_notifications
+    )
+    await notification_workers.start()
+    app.state.notification_workers = notification_workers
+
     logger.info("Chic A Boo API started (env=%s)", settings.app_env)
     yield
 
+    await notification_workers.stop()
     await event_worker.stop()
     await reconciliation_worker.stop()
+    await WhatsAppProvider.aclose()
     await RazorpayClient.aclose()
     await redis_client.close()
     await engine.dispose()
@@ -341,6 +344,9 @@ app.include_router(admin_payments.router)
 
 # Provider webhooks (no auth — authenticity comes from the Meta signature)
 app.include_router(whatsapp_webhook_router)
+app.include_router(otp_auth_router)
+app.include_router(whatsapp_admin_router)
+app.include_router(campaign_router)
 app.include_router(admin_invoices.router)
 app.include_router(admin_maintenance.router)
 app.include_router(admin_media.router)

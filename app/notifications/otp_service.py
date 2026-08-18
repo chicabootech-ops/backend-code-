@@ -1,18 +1,8 @@
 """Self-issued OTP challenges.
 
-The code is generated, hashed and verified here — never by the SMS vendor. An
-earlier integration delegated generation to the provider and we only held a
-`verification_id`. That had two consequences worth spelling out, because both are
-fixed here, and they are why MSG91's OTP product is not used either:
-
-1.  **The same code could not be sent over two channels.** WhatsApp needs the
-    code as a template variable, and we never had it. Owning generation is the
-    only way to satisfy "never generate two different OTPs".
-
-2.  **Phone OTP died whenever Redis did.** The only record of an in-flight
-    challenge was a Redis key, so `phone_service` deliberately hard-failed on a
-    Redis outage. The challenge now lives in Postgres, so Redis is an
-    optimisation rather than a dependency.
+The code is generated, hashed and verified here — never by a messaging vendor.
+WhatsApp needs the code as a template variable, so a provider that generates and
+validates it itself cannot deliver over WhatsApp at all.
 
 Security posture: the code is generated with `secrets`, stored only as an Argon2
 hash, never logged, and never returned in an API response. Verification is

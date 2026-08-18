@@ -79,8 +79,10 @@ async def get_user_admin_service(db: Annotated[AsyncSession, Depends(get_db)]) -
     return UserAdminService(db)
 
 
-async def get_order_admin_service(db: Annotated[AsyncSession, Depends(get_db)]) -> OrderAdminService:
-    return OrderAdminService(db)
+async def get_order_admin_service(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+) -> OrderAdminService:
+    return OrderAdminService(db, getattr(request.app.state, "build_notifications", None))
 
 
 async def get_invoice_admin_service(db: Annotated[AsyncSession, Depends(get_db)]) -> InvoiceAdminService:
@@ -115,8 +117,13 @@ async def get_bouquet_admin_service(
     return BouquetAdminService(db)
 
 
-async def get_refund_service(db: Annotated[AsyncSession, Depends(get_db)]) -> RefundService:
-    return RefundService(db)
+async def get_refund_service(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+) -> RefundService:
+    return RefundService(
+        db,
+        notifications_factory=getattr(request.app.state, "build_notifications", None),
+    )
 
 
 async def get_testimonial_admin_service(

@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     # Public site URL (password reset links, email branding)
     site_url: str = "https://www.chicaboo.co"
 
+    #: Storefront origin used to build links inside WhatsApp messages (cart URL,
+    #: product URL, retry-payment URL). Empty falls back to `site_url` — they are
+    #: the same host in every current deployment, and defaulting rather than
+    #: duplicating means a message can never link at an unset origin.
+    frontend_url: str = ""
+
     # Email — Resend primary, SMTP fallback
     resend_api_key: str = ""
     email_from: str = "noreply@chicaboo.co"
@@ -57,25 +63,11 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_pass: str = ""
 
-    # MSG91 — the SMS transport. Sends via the Flow API, which renders a
-    # DLT-registered template from named variables on MSG91's side.
-    #
-    # MSG91's OTP product is deliberately not used: it would generate and
-    # validate the code itself, which is precisely what made the previous
-    # provider a dead end. We issue and verify our own codes.
-    msg91_enabled: bool = True
-    msg91_auth_key: str = ""
-    #: Default DLT-registered template. Per-notification ids override this via
-    #: ops.notification_templates.provider_template_id.
-    msg91_template_id: str = ""
-    #: 6-char alphanumeric header approved by the DLT registry.
-    msg91_sender_id: str = ""
-    msg91_base_url: str = "https://control.msg91.com"
-    msg91_flow_path: str = "/api/v5/flow"
-
-    #: Provider-agnostic phone settings. These were previously namespaced under
-    #: the SMS vendor, which meant swapping vendors touched unrelated call sites.
-    sms_country_code: str = "91"
+    #: Provider-agnostic phone settings. Deliberately not namespaced under a
+    #: vendor: WhatsApp is the only transport today, and burying "what country
+    #: are these numbers in" inside a vendor block is what made the last swap
+    #: touch unrelated call sites.
+    phone_country_code: str = "91"
     otp_length: int = 6
 
     # --- WhatsApp Business Platform (Meta Cloud API) -------------------------
@@ -95,35 +87,31 @@ class Settings(BaseSettings):
     whatsapp_default_language: str = "en"
 
     # --- Channel policy ------------------------------------------------------
-    notification_primary_provider: str = "msg91"
-
-    # SMS is the only live phone channel. These defaults used to be "whatsapp",
-    # which meant any deployment that did not explicitly set the env vars sent
-    # every OTP to WhatsApp first — where no template is approved, so it failed
-    # and burned ~2s before falling back. Defaulting to the channel that actually
-    # works keeps a missing env var from routing to a dead one. Flip back to
-    # "whatsapp" once the business is verified and Meta approves the templates.
-    otp_primary_channel: str = "sms"
-    otp_fallback_channel: str = "sms"
-    #: No fallback: SMS is both primary and the only option, and attempting a
-    #: second channel that cannot deliver only delays the error the caller needs.
-    otp_whatsapp_fallback_enabled: bool = False
-
-    transactional_primary_channel: str = "sms"
-    transactional_fallback_channel: str = "sms"
-
+    # WhatsApp is the ONLY delivery channel. Every SMS vendor has been removed:
+    # OTP, order updates and marketing all ride Meta's Cloud API.
+    #
+    # The `Channel` enum and the `NotificationProvider` ABC are deliberately kept
+    # even though there is one implementation, because the channel is stored on
+    # every notification and attempt row. Adding a transport later is a new
+    # provider class plus a registration line — not a schema change.
+    otp_primary_channel: str = "whatsapp"
+    transactional_primary_channel: str = "whatsapp"
     marketing_primary_channel: str = "whatsapp"
-    #: Deliberately False. A failed marketing WhatsApp must not silently become a
-    #: paid SMS; campaigns opt in individually.
-    marketing_sms_fallback: bool = False
 
-    #: What to do when WhatsApp neither confirms nor denies (timeout).
-    #: never      — wait for reconciliation only (safest, may delay the OTP)
-    #: reconcile  — re-check with Meta, fall back only if still unresolved
-    #: immediate  — fall back at once (most duplicates)
-    otp_unknown_fallback_policy: str = "reconcile"
-    #: How long to wait for a delivery signal before the reconcile policy acts.
-    otp_unknown_reconcile_seconds: int = 20
+    # --- Retry policy --------------------------------------------------------
+    # There is no second channel to fall back to, so a transient failure is
+    # retried on WhatsApp itself. Attempt 1 is immediate; these are the delays
+    # before attempts 2 and 3, after which the notification is FAILED.
+    #
+    # UNKNOWN (timeout) is NOT retried on this ladder — the message may already
+    # have been delivered and Meta charges per conversation. It waits for the
+    # webhook, and the reconciler resolves it if no signal ever arrives.
+    notification_retry_delays_seconds: list[int] = [300, 900]
+    notification_max_attempts: int = 3
+
+    #: How long an UNKNOWN notification waits for a delivery webhook before the
+    #: reconciler asks Meta directly what happened to it.
+    notification_unknown_reconcile_seconds: int = 300
 
     # OTP lifecycle
     otp_max_verify_attempts: int = 5
@@ -132,6 +120,20 @@ class Settings(BaseSettings):
     rate_limit_otp_per_phone_hourly: int = 5
     #: Max OTP requests per IP per hour.
     rate_limit_otp_per_ip_hourly: int = 20
+
+    # --- Campaigns & marketing ----------------------------------------------
+    #: Recipients per campaign batch, and the pause between batches. Meta
+    #: throttles per phone number id; pacing keeps a blast from burning quality
+    #: rating, which the same number needs for OTP delivery.
+    campaign_batch_size: int = 50
+    campaign_batch_pause_seconds: float = 1.0
+
+    #: Abandoned-cart ladder, in hours after the cart went quiet.
+    cart_reminder_first_hours: int = 1
+    cart_reminder_second_hours: int = 24
+    cart_reminder_coupon_hours: int = 48
+    #: Coupon handed out by the third reminder. Empty disables that rung.
+    cart_reminder_coupon_code: str = ""
 
     max_failed_login_attempts: int = 5
     account_lockout_minutes: int = 30
@@ -215,6 +217,15 @@ class Settings(BaseSettings):
     def whatsapp_signing_secret(self) -> str:
         """Meta signs webhooks with the app secret unless one is set explicitly."""
         return self.whatsapp_webhook_secret or self.whatsapp_app_secret
+
+    @property
+    def effective_frontend_url(self) -> str:
+        """Storefront origin for links embedded in messages, without a trailing /.
+
+        A trailing slash would produce `https://site.co//cart`, which most hosts
+        serve but which looks broken in a WhatsApp link preview.
+        """
+        return (self.frontend_url or self.site_url).rstrip("/")
 
     @property
     def database_dsn(self) -> str:

@@ -62,15 +62,29 @@ class OrderRepository:
         order_id: uuid.UUID,
         status: str,
         note: str | None,
+        *,
+        tracking_number: str | None = None,
+        courier: str | None = None,
     ) -> Order | None:
         existing = await self.get_by_id(order_id)
         if not existing:
             return None
         from_status = existing.status
+        values: dict[str, object] = {"status": status}
+        tracking = {
+            key: value
+            for key, value in (
+                ("tracking_number", tracking_number),
+                ("courier", courier),
+            )
+            if value
+        }
+        if tracking:
+            values["metadata_"] = Order.metadata_ + tracking
         result = await self._session.execute(
             update(Order)
             .where(Order.id == order_id)
-            .values(status=status)
+            .values(**values)
             .returning(Order)
         )
         order = result.scalar_one_or_none()

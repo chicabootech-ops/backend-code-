@@ -15,8 +15,9 @@ class ReturnError(Exception):
 
 
 class ReturnService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, notifications_factory=None) -> None:
         self._session = session
+        self._notifications_factory = notifications_factory
 
     async def list_for_user(self, user_id: uuid.UUID) -> list[dict]:
         result = await self._session.execute(
@@ -80,4 +81,25 @@ class ReturnService:
             )
         ).scalar_one()
         row["order_number"] = order_number
+        await self._session.commit()
+        await self._notify_created(
+            order_id=order_id, return_id=row["id"], order_number=order_number
+        )
         return row
+
+    async def _notify_created(
+        self, *, order_id: uuid.UUID, return_id: uuid.UUID, order_number: int
+    ) -> None:
+        if self._notifications_factory is None:
+            return
+        from app.config import settings
+        from app.notifications.order_notifier import OrderNotifier
+
+        notifier = OrderNotifier(
+            self._session,
+            settings,
+            notifications=self._notifications_factory(self._session),
+        )
+        await notifier.return_created(
+            order_id=order_id, return_id=return_id, order_number=order_number
+        )

@@ -9,19 +9,22 @@ Callers say *what happened*, not *how to tell anyone*:
         idempotency_key=f"order:{order_id}:ORDER_CONFIRMED",
     )
 
-Everything else — which channel, which template, whether the customer consented,
-whether this was already sent, and whether a failure earns an SMS — is decided
-here.
+Everything else — which template, whether the customer consented, whether this was
+already sent, and what a failure earns — is decided here.
 
-The fallback rule, stated once because it is the part most easily got wrong:
+**WhatsApp is the only channel.** There is no SMS vendor to fall back to, so a
+failure is resolved on WhatsApp or not at all:
 
     delivered/accepted  -> stop
-    PERMANENT failure   -> try the fallback channel, exactly once
-    TRANSIENT failure   -> leave for retry on the same channel
+    TRANSIENT failure   -> schedule a retry on WhatsApp (5 min, then 15 min)
+    PERMANENT failure   -> stop; this will never work for this recipient
     UNKNOWN             -> stop and reconcile; the message may have arrived
 
-An UNKNOWN never becomes an SMS on the spot. That is the whole reason a WhatsApp
-timeout does not produce two OTP messages.
+The UNKNOWN rule survived the removal of SMS and matters more now, not less. A
+timeout is not a failure: Meta may well have delivered the message, and a retry
+would send the customer a second copy of the same OTP and bill a second
+conversation. UNKNOWN waits for the webhook; the reconciler resolves it if no
+signal ever arrives.
 """
 
 from __future__ import annotations
@@ -46,14 +49,15 @@ from app.notifications.types import (
     Provider,
     ProviderResult,
     category_for,
+    consent_column_for,
 )
 
 logger = logging.getLogger(__name__)
 
-#: Which provider serves which channel.
+#: Which provider serves which channel. WhatsApp is the only live transport;
+#: this mapping is the single place a future one would be added.
 _PROVIDER_FOR_CHANNEL = {
     Channel.WHATSAPP: Provider.WHATSAPP,
-    Channel.SMS: Provider.MSG91,
 }
 
 
@@ -123,9 +127,18 @@ class NotificationService:
         )
 
         # Consent gate. Transactional and OTP are service messages and are not
-        # gated; marketing requires an explicit opt-in.
-        if category is Category.MARKETING and user_id is not None:
-            if not await self._marketing_allowed(user_id, primary):
+        # gated — a customer who placed an order asked for its updates, and
+        # someone requesting a login code asked for that code. Marketing and cart
+        # reminders each require their own explicit opt-in.
+        #
+        # An anonymous recipient (user_id=None) cannot be consent-checked, so
+        # marketing to one is refused rather than assumed. Campaigns always
+        # resolve to a user id; this guards ad-hoc callers.
+        if category is Category.MARKETING:
+            if user_id is None:
+                logger.warning("notification_suppressed_anonymous_marketing type=%s", ntype)
+                return SendOutcome(notification_id=None, status=None)
+            if not await self._marketing_allowed(user_id, ntype):
                 logger.info("notification_suppressed_no_consent type=%s", ntype)
                 return SendOutcome(notification_id=None, status=None)
 
@@ -156,7 +169,13 @@ class NotificationService:
         return SendOutcome(notification_id=notification_id, status=status)
 
     async def deliver(self, notification_id: uuid.UUID) -> DeliveryStatus:
-        """Run the channel ladder for one notification. Safe to re-run."""
+        """Send one notification on WhatsApp. Safe to re-run.
+
+        Re-running is safe because the attempt row is claimed against a unique
+        index before the provider is called: a worker that crashes after Meta
+        accepted the message cannot send it again, it can only observe that the
+        attempt already exists.
+        """
         notification = await self._repo.lock(notification_id)
         if notification is None:
             await self._session.rollback()
@@ -167,64 +186,94 @@ class NotificationService:
             await self._session.commit()
             return DeliveryStatus(notification["status"])
 
+        # Attempt numbering starts at 1 and increments per retry. The attempt
+        # row's unique key includes it, so retry N cannot collide with retry N-1.
+        attempt_number = int(notification["attempt_count"] or 0) + 1
+        max_attempts = self._settings.notification_max_attempts
+
         await self._repo.set_status(notification_id, status="sending")
+        await self._repo.set_attempt_count(notification_id, attempt_number)
         await self._session.commit()
 
-        primary = Channel(notification["channel_preference"])
-        result = await self._attempt(notification, primary, attempt_number=1)
+        result = await self._attempt(
+            notification, Channel.WHATSAPP, attempt_number=attempt_number
+        )
 
         if result is not None and result.accepted:
             await self._finish(notification_id, result)
             return result.status
 
-        # UNKNOWN stops here on purpose. Reconciliation or the webhook resolves
-        # it; sending the fallback now is how duplicates happen.
+        # UNKNOWN stops here on purpose, and is deliberately NOT retried. Meta
+        # may already have delivered it; retrying sends a second OTP and bills a
+        # second conversation. The webhook or the reconciler resolves this.
         if result is not None and result.status is DeliveryStatus.UNKNOWN:
             await self._repo.set_status(notification_id, status="unknown")
             await self._session.commit()
             logger.info("notification_unknown id=%s awaiting_signal", notification_id)
             return DeliveryStatus.UNKNOWN
 
-        if result is not None and result.should_retry:
-            # Leave pending; the worker picks it up again with backoff.
-            await self._repo.set_status(notification_id, status="pending")
-            await self._session.commit()
-            return DeliveryStatus.REQUESTED
-
-        # Definitive failure on the primary channel.
-        fallback = self._fallback_channel(Category(notification["category"]))
-        if not notification["fallback_allowed"] or fallback is None or fallback == primary:
+        # No provider registered, or the channel is unconfigured. Not a provider
+        # failure, so it is not counted as an attempt against the retry budget.
+        if result is None:
+            await self._repo.set_attempt_count(notification_id, attempt_number - 1)
             await self._repo.set_status(
-                notification_id, status="failed", failed=True, completed=True
+                notification_id,
+                status="failed",
+                failed=True,
+                completed=True,
+                last_error="whatsapp_unavailable",
             )
             await self._session.commit()
-            logger.warning("notification_failed id=%s no_fallback", notification_id)
+            logger.error("notification_no_provider id=%s", notification_id)
             return DeliveryStatus.FAILED
 
-        logger.info(
-            "sms_fallback_triggered id=%s from=%s to=%s", notification_id, primary, fallback
-        )
-        fallback_result = await self._attempt(notification, fallback, attempt_number=1)
+        # TRANSIENT — retry on WhatsApp itself, if there is budget left.
+        if result.should_retry and attempt_number < max_attempts:
+            delay = self._retry_delay(attempt_number)
+            await self._repo.schedule_retry(
+                notification_id,
+                delay_seconds=delay,
+                last_error=result.failure_reason or result.failure_code,
+            )
+            await self._session.commit()
+            logger.info(
+                "notification_retry_scheduled id=%s attempt=%s/%s in=%ss",
+                notification_id,
+                attempt_number,
+                max_attempts,
+                delay,
+            )
+            return DeliveryStatus.REQUESTED
 
-        if fallback_result is not None and fallback_result.accepted:
-            await self._finish(notification_id, fallback_result)
-            return fallback_result.status
-
-        status = (
-            DeliveryStatus.UNKNOWN
-            if fallback_result is not None
-            and fallback_result.status is DeliveryStatus.UNKNOWN
-            else DeliveryStatus.FAILED
-        )
+        # PERMANENT, or transient with the budget exhausted. Either way this is
+        # the end of the road — there is no other channel to try.
         await self._repo.set_status(
             notification_id,
-            status=str(status),
-            failed=status is DeliveryStatus.FAILED,
+            status="failed",
+            failed=True,
             completed=True,
+            last_error=result.failure_reason or result.failure_code,
         )
         await self._session.commit()
-        logger.warning("notification_completed id=%s status=%s", notification_id, status)
-        return status
+        logger.warning(
+            "notification_failed id=%s attempts=%s class=%s code=%s",
+            notification_id,
+            attempt_number,
+            result.error_class,
+            result.failure_code,
+        )
+        return DeliveryStatus.FAILED
+
+    def _retry_delay(self, attempt_number: int) -> int:
+        """Delay before the next attempt.
+
+        `notification_retry_delays_seconds` holds the gaps *after* attempt 1, so
+        attempt 1 reads index 0. A ladder shorter than the attempt budget reuses
+        its last entry rather than crashing on an index error.
+        """
+        delays = self._settings.notification_retry_delays_seconds or [300]
+        index = min(attempt_number - 1, len(delays) - 1)
+        return int(delays[max(index, 0)])
 
     # ------------------------------------------------------------------ #
     # Internals
@@ -301,38 +350,58 @@ class NotificationService:
         await self._session.commit()
 
     def _primary_channel(self, category: Category) -> Channel:
-        if category is Category.OTP:
-            return Channel(self._settings.otp_primary_channel)
-        if category is Category.MARKETING:
-            return Channel(self._settings.marketing_primary_channel)
-        return Channel(self._settings.transactional_primary_channel)
+        """Always WhatsApp today, but read from settings rather than hardcoded.
 
-    def _fallback_channel(self, category: Category) -> Channel | None:
+        The per-category settings are kept so that adding a transport back is a
+        config change plus a provider class. They are validated on the way out:
+        a stray `OTP_PRIMARY_CHANNEL=sms` in the environment would otherwise
+        route at a provider that is not registered, and the notification would
+        sit unsendable instead of failing loudly.
+        """
         if category is Category.OTP:
-            if not self._settings.otp_whatsapp_fallback_enabled:
-                return None
-            return Channel(self._settings.otp_fallback_channel)
-        if category is Category.MARKETING:
-            # Marketing never silently becomes SMS. A campaign that wants it
-            # passes allow_fallback=True explicitly.
-            return Channel.SMS if self._settings.marketing_sms_fallback else None
-        return Channel(self._settings.transactional_fallback_channel)
+            configured = self._settings.otp_primary_channel
+        elif category is Category.MARKETING:
+            configured = self._settings.marketing_primary_channel
+        else:
+            configured = self._settings.transactional_primary_channel
+
+        try:
+            channel = Channel(configured)
+        except ValueError:
+            logger.error("channel_unknown configured=%s — routing to whatsapp", configured)
+            return Channel.WHATSAPP
+        if channel not in self._providers:
+            logger.error(
+                "channel_not_registered configured=%s — routing to whatsapp", configured
+            )
+            return Channel.WHATSAPP
+        return channel
 
     def _fallback_allowed(self, category: Category) -> bool:
-        if category is Category.MARKETING:
-            return bool(self._settings.marketing_sms_fallback)
-        if category is Category.OTP:
-            return bool(self._settings.otp_whatsapp_fallback_enabled)
-        return True
+        """Never. WhatsApp is the only channel; there is nothing to fall back to.
 
-    async def _marketing_allowed(self, user_id: uuid.UUID, channel: Channel) -> bool:
-        column = {
-            Channel.WHATSAPP: "whatsapp_marketing",
-            Channel.SMS: "sms_marketing",
-            Channel.EMAIL: "email_marketing",
-        }.get(channel)
+        Kept as a method rather than deleted because `fallback_allowed` is still
+        a column on every notification row, and a second transport would make
+        this a real decision again.
+        """
+        return False
+
+    async def _marketing_allowed(
+        self, user_id: uuid.UUID, notification_type: NotificationType
+    ) -> bool:
+        """Check the opt-in that governs this notification type.
+
+        Cart reminders and promotional blasts are gated by different columns, so
+        the column comes from the type rather than the channel — opting out of
+        promos should not silence "you left something in your basket", and vice
+        versa.
+        """
+        column = consent_column_for(notification_type)
         if column is None:
-            return False
+            return True
+        # The column name comes from `consent_column_for`, which returns one of
+        # two hardcoded literals — never from a request. No user input reaches
+        # this string.
         row = (
             await self._session.execute(
                 text(

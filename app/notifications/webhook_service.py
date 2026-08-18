@@ -188,11 +188,20 @@ class WhatsAppWebhookService:
         if mapped in (DeliveryStatus.DELIVERED, DeliveryStatus.READ):
             await self._repo.set_status(
                 attempt["notification_id"],
-                status=DeliveryStatus.DELIVERED,
+                # 'read' is a strictly stronger signal than 'delivered' and the
+                # analytics read-rate depends on the difference, so it is
+                # preserved here rather than flattened to delivered.
+                status=(
+                    DeliveryStatus.READ
+                    if mapped is DeliveryStatus.READ
+                    else DeliveryStatus.DELIVERED
+                ),
                 delivered=True,
                 completed=True,
             )
-            logger.info("whatsapp_delivered notification=%s", attempt["notification_id"])
+            logger.info(
+                "whatsapp_%s notification=%s", mapped, attempt["notification_id"]
+            )
         elif mapped is DeliveryStatus.SENT:
             logger.info("whatsapp_sent notification=%s", attempt["notification_id"])
         elif mapped is DeliveryStatus.FAILED:
@@ -202,14 +211,115 @@ class WhatsAppWebhookService:
                 failure_code,
                 error_class,
             )
-            # A definitive WhatsApp failure arriving by webhook is exactly the
-            # signal the fallback engine was waiting for. Returning the
-            # notification to 'pending' lets the worker run the SMS leg — it
-            # cannot re-send WhatsApp, because that attempt row already exists.
-            if error_class is ErrorClass.PERMANENT:
-                await self._repo.set_status(attempt["notification_id"], status="pending")
+            # WhatsApp is the only channel, so there is no fallback leg to hand
+            # this to. The two failure classes get different treatment:
+            #
+            #   PERMANENT — this recipient will never receive on WhatsApp
+            #               (not on WhatsApp, template disabled). Terminal.
+            #   TRANSIENT — Meta rate-limited or blipped. Hand it back to the
+            #               retry ladder, which re-sends under a NEW attempt
+            #               number; the existing attempt row is untouched, so
+            #               this cannot double-send under the same number.
+            #
+            # Before, a permanent failure was returned to 'pending' so the SMS
+            # leg could run. With no SMS leg that would spin: the worker would
+            # pick it up, find the WhatsApp attempt already exists, and put it
+            # straight back.
+            if error_class is ErrorClass.TRANSIENT:
+                await self._schedule_retry_if_budget(attempt["notification_id"])
+            else:
+                await self._repo.set_status(
+                    attempt["notification_id"],
+                    status="failed",
+                    failed=True,
+                    completed=True,
+                    last_error=failure_reason or failure_code,
+                )
+
+        # Campaign membership mirrors the delivery signal, so campaign analytics
+        # do not have to join through notifications on every read.
+        await self._sync_campaign_recipient(attempt["notification_id"], mapped)
 
         await self._finish_event(event_id, "processed", attempt_id=attempt["id"])
+
+    async def _schedule_retry_if_budget(self, notification_id: uuid.UUID) -> None:
+        """Re-queue a transiently-failed notification, if attempts remain."""
+        row = (
+            await self._session.execute(
+                text(
+                    "SELECT attempt_count FROM ops.notifications WHERE id = :id"
+                ),
+                {"id": str(notification_id)},
+            )
+        ).mappings().first()
+        attempts = int((row or {}).get("attempt_count") or 0)
+        max_attempts = self._settings.notification_max_attempts
+
+        if attempts >= max_attempts:
+            await self._repo.set_status(
+                notification_id,
+                status="failed",
+                failed=True,
+                completed=True,
+                last_error="retry budget exhausted",
+            )
+            logger.warning("notification_retry_exhausted id=%s", notification_id)
+            return
+
+        delays = self._settings.notification_retry_delays_seconds or [300]
+        delay = int(delays[min(max(attempts - 1, 0), len(delays) - 1)])
+        await self._repo.schedule_retry(notification_id, delay_seconds=delay)
+        logger.info(
+            "notification_retry_from_webhook id=%s in=%ss", notification_id, delay
+        )
+
+    async def _sync_campaign_recipient(
+        self, notification_id: uuid.UUID, status: DeliveryStatus
+    ) -> None:
+        """Mirror a delivery signal onto the campaign recipient row, if any.
+
+        Guarded by the same monotonic rule as attempts: a late 'sent' must not
+        pull a row back from 'read'. Non-campaign notifications match no row and
+        the UPDATE is a no-op.
+        """
+        rank = {
+            DeliveryStatus.SENT: 2,
+            DeliveryStatus.FAILED: 3,
+            DeliveryStatus.DELIVERED: 4,
+            DeliveryStatus.READ: 5,
+        }
+        new_rank = rank.get(status)
+        if new_rank is None:
+            return
+
+        await self._session.execute(
+            text(
+                """
+                UPDATE ops.campaign_recipients
+                SET status = CASE WHEN :new_rank > COALESCE(
+                        CASE status
+                            WHEN 'pending' THEN 0 WHEN 'queued' THEN 1
+                            WHEN 'sent' THEN 2 WHEN 'failed' THEN 3
+                            WHEN 'delivered' THEN 4 WHEN 'read' THEN 5
+                            ELSE 0 END, 0)
+                    THEN :status ELSE status END,
+                    sent_at      = CASE WHEN :is_sent      THEN COALESCE(sent_at, now())      ELSE sent_at END,
+                    delivered_at = CASE WHEN :is_delivered THEN COALESCE(delivered_at, now()) ELSE delivered_at END,
+                    read_at      = CASE WHEN :is_read      THEN COALESCE(read_at, now())      ELSE read_at END,
+                    failed_at    = CASE WHEN :is_failed    THEN COALESCE(failed_at, now())    ELSE failed_at END
+                WHERE notification_id = :nid
+                """
+            ),
+            {
+                "nid": str(notification_id),
+                "status": str(status),
+                "new_rank": new_rank,
+                "is_sent": status is DeliveryStatus.SENT,
+                "is_delivered": status in (DeliveryStatus.DELIVERED, DeliveryStatus.READ),
+                "is_read": status is DeliveryStatus.READ,
+                "is_failed": status is DeliveryStatus.FAILED,
+            },
+        )
 
     async def _record(
         self,

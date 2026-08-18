@@ -30,6 +30,10 @@ class Permission(StrEnum):
     COUPON_WRITE = "coupon:write"
     INVENTORY_WRITE = "inventory:write"
     MAINTENANCE_RUN = "maintenance:run"
+    #: Starting a campaign messages real customers, spends Meta conversation
+    #: quota, and can damage the phone number's quality rating — which OTP
+    #: delivery shares. Granted narrowly for the same reason as REFUND_WRITE.
+    MARKETING_SEND = "marketing:send"
 
 
 SUPER_ADMIN = "super_admin"
@@ -44,6 +48,10 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
         {Permission.ORDER_WRITE, Permission.INVENTORY_WRITE, Permission.REFUND_WRITE}
     ),
     "support_agent": frozenset({Permission.ORDER_WRITE}),
+    #: Runs campaigns and edits templates, but cannot touch orders or refunds.
+    "marketing_manager": frozenset(
+        {Permission.MARKETING_SEND, Permission.COUPON_WRITE}
+    ),
 }
 
 

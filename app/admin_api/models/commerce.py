@@ -202,6 +202,7 @@ class Order(Base):
     grand_total_paise: Mapped[int] = mapped_column(nullable=False, default=0)
     shipping_address: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     admin_note: Mapped[str | None] = mapped_column(Text)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

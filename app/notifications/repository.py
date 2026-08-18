@@ -117,6 +117,7 @@ class NotificationRepository:
         delivered: bool = False,
         failed: bool = False,
         completed: bool = False,
+        last_error: str | None = None,
     ) -> None:
         await self._session.execute(
             text(
@@ -125,7 +126,11 @@ class NotificationRepository:
                 SET status = :status,
                     delivered_at = CASE WHEN :delivered THEN COALESCE(delivered_at, now()) ELSE delivered_at END,
                     failed_at    = CASE WHEN :failed    THEN COALESCE(failed_at, now())    ELSE failed_at END,
-                    completed_at = CASE WHEN :completed THEN COALESCE(completed_at, now()) ELSE completed_at END
+                    completed_at = CASE WHEN :completed THEN COALESCE(completed_at, now()) ELSE completed_at END,
+                    last_error   = COALESCE(:last_error, last_error),
+                    -- A terminal state clears the retry slot, so the retry
+                    -- worker cannot pick up something already finished.
+                    next_retry_at = CASE WHEN :completed THEN NULL ELSE next_retry_at END
                 WHERE id = :id
                 """
             ),
@@ -135,17 +140,63 @@ class NotificationRepository:
                 "delivered": delivered,
                 "failed": failed,
                 "completed": completed,
+                "last_error": (last_error or "")[:400] or None,
+            },
+        )
+        await self._session.flush()
+
+    async def set_attempt_count(self, notification_id: uuid.UUID, count: int) -> None:
+        """Record how many provider attempts have been made against the budget."""
+        await self._session.execute(
+            text("UPDATE ops.notifications SET attempt_count = :n WHERE id = :id"),
+            {"id": str(notification_id), "n": int(count)},
+        )
+        await self._session.flush()
+
+    async def schedule_retry(
+        self,
+        notification_id: uuid.UUID,
+        *,
+        delay_seconds: int,
+        last_error: str | None = None,
+    ) -> None:
+        """Return a notification to the queue with a retry time.
+
+        Status goes back to 'pending' with `next_retry_at` set — the retry
+        worker's query requires both, so a pending row with no retry time (a
+        fresh notification) is picked up by the delivery worker instead.
+        """
+        await self._session.execute(
+            text(
+                """
+                UPDATE ops.notifications
+                SET status = 'pending',
+                    next_retry_at = now() + make_interval(secs => :delay),
+                    last_error = COALESCE(:last_error, last_error)
+                WHERE id = :id
+                """
+            ),
+            {
+                "id": str(notification_id),
+                "delay": int(delay_seconds),
+                "last_error": (last_error or "")[:400] or None,
             },
         )
         await self._session.flush()
 
     async def pending_batch(self, limit: int = 50) -> list[uuid.UUID]:
+        """Fresh notifications awaiting their first send.
+
+        `next_retry_at IS NULL` excludes anything waiting on the retry ladder, so
+        a notification that failed transiently is not re-sent immediately by the
+        delivery worker — that is the retry worker's job, on its own schedule.
+        """
         rows = (
             await self._session.execute(
                 text(
                     """
                     SELECT id FROM ops.notifications
-                    WHERE status = 'pending'
+                    WHERE status = 'pending' AND next_retry_at IS NULL
                     ORDER BY created_at
                     LIMIT :lim
                     FOR UPDATE SKIP LOCKED
@@ -155,6 +206,54 @@ class NotificationRepository:
             )
         ).scalars().all()
         return [r if isinstance(r, uuid.UUID) else uuid.UUID(str(r)) for r in rows]
+
+    async def retry_batch(self, limit: int = 50) -> list[uuid.UUID]:
+        """Notifications whose retry time has arrived."""
+        rows = (
+            await self._session.execute(
+                text(
+                    """
+                    SELECT id FROM ops.notifications
+                    WHERE status = 'pending'
+                      AND next_retry_at IS NOT NULL
+                      AND next_retry_at <= now()
+                    ORDER BY next_retry_at
+                    LIMIT :lim
+                    FOR UPDATE SKIP LOCKED
+                    """
+                ),
+                {"lim": limit},
+            )
+        ).scalars().all()
+        return [r if isinstance(r, uuid.UUID) else uuid.UUID(str(r)) for r in rows]
+
+    async def stale_unknown_batch(
+        self, *, older_than_seconds: int, limit: int = 50
+    ) -> list[dict]:
+        """UNKNOWN notifications that never received a delivery signal.
+
+        These are the timeouts: Meta may or may not have delivered them. The
+        reconciler asks Meta directly rather than guessing, because guessing
+        either duplicates an OTP or silently drops one.
+        """
+        rows = (
+            await self._session.execute(
+                text(
+                    """
+                    SELECT n.id, n.notification_type, n.recipient, a.provider_message_id
+                    FROM ops.notifications n
+                    LEFT JOIN ops.notification_attempts a
+                           ON a.notification_id = n.id AND a.channel = 'whatsapp'
+                    WHERE n.status = 'unknown'
+                      AND n.updated_at < now() - make_interval(secs => :age)
+                    ORDER BY n.updated_at
+                    LIMIT :lim
+                    """
+                ),
+                {"age": int(older_than_seconds), "lim": limit},
+            )
+        ).mappings().all()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ #
     # Attempts

@@ -4,12 +4,37 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+#: Must stay in sync with the orders_status_check constraint.
+ORDER_STATUSES = (
+    "pending",
+    "confirmed",
+    "processing",
+    "packed",
+    "shipped",
+    "out_for_delivery",
+    "delivered",
+    "completed",
+    "cancelled",
+    "returned",
+    "refunded",
+)
 
 
 class OrderStatusUpdate(BaseModel):
     status: str
     note: str | None = None
+    tracking_number: str | None = Field(default=None, max_length=64)
+    courier: str | None = Field(default=None, max_length=64)
+
+    @field_validator("status")
+    @classmethod
+    def _known_status(cls, value: str) -> str:
+        normalised = value.strip().lower()
+        if normalised not in ORDER_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(ORDER_STATUSES)}")
+        return normalised
 
 
 class OrderTrackingEvent(BaseModel):
