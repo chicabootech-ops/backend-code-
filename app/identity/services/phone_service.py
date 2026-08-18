@@ -178,6 +178,7 @@ class PhoneService:
                 purpose=OTP_PURPOSE_PHONE_VERIFY,
                 destination=user.phone,
                 code=otp,
+                destination_type="phone",
             )
         except OtpError as exc:
             # Preserve the previous contract: a bad/expired code is a 403 here.

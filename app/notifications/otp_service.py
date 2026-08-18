@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.identity.core.security.password import hash_otp, verify_otp
+from app.identity.core.validation import to_e164, validate_phone
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,18 @@ class OtpService:
         self._session = session
         self._settings = settings
 
+    @staticmethod
+    def _normalize_destination(destination: str, *, destination_type: str, country_code: str) -> str:
+        if destination_type != "phone":
+            return destination.strip()
+        cleaned = destination.strip()
+        if not cleaned:
+            return cleaned
+        try:
+            return to_e164(cleaned, country_code)
+        except Exception:
+            return f"+{country_code}{validate_phone(cleaned)}"
+
     # ------------------------------------------------------------------ #
     # Issue
     # ------------------------------------------------------------------ #
@@ -62,8 +75,14 @@ class OtpService:
         ip_address: str | None = None,
     ) -> OtpChallenge:
         """Create a challenge, superseding any live one for this destination."""
-        await self._enforce_cooldown(destination, purpose)
-        await self._enforce_rate_limits(destination, ip_address)
+        normalized_destination = self._normalize_destination(
+            destination,
+            destination_type=destination_type,
+            country_code=self._settings.phone_country_code,
+        )
+
+        await self._enforce_cooldown(normalized_destination, purpose)
+        await self._enforce_rate_limits(normalized_destination, ip_address)
 
         length = self._settings.otp_length
         code = f"{secrets.randbelow(10**length):0{length}d}"
@@ -80,7 +99,7 @@ class OtpService:
                   AND consumed_at IS NULL AND superseded_at IS NULL
                 """
             ),
-            {"dest": destination, "purpose": purpose},
+            {"dest": normalized_destination, "purpose": purpose},
         )
 
         challenge_id = (
@@ -98,7 +117,7 @@ class OtpService:
                     "uid": str(user_id) if user_id else None,
                     "purpose": purpose,
                     "dtype": destination_type,
-                    "dest": destination,
+                    "dest": normalized_destination,
                     "hash": hash_otp(code),
                     "expires": expires_at,
                     "max_attempts": self._settings.otp_max_verify_attempts,
@@ -138,8 +157,20 @@ class OtpService:
     # ------------------------------------------------------------------ #
     # Verify
     # ------------------------------------------------------------------ #
-    async def verify(self, *, purpose: str, destination: str, code: str) -> uuid.UUID:
+    async def verify(
+        self,
+        *,
+        purpose: str,
+        destination: str,
+        code: str,
+        destination_type: str = "phone",
+    ) -> uuid.UUID:
         """Consume the live challenge. Returns its id, or raises."""
+        normalized_destination = self._normalize_destination(
+            destination,
+            destination_type=destination_type,
+            country_code=self._settings.phone_country_code,
+        )
         row = (
             await self._session.execute(
                 text(
@@ -153,7 +184,7 @@ class OtpService:
                     FOR UPDATE
                     """
                 ),
-                {"dest": destination, "purpose": purpose},
+                {"dest": normalized_destination, "purpose": purpose},
             )
         ).mappings().first()
 
