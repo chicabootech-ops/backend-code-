@@ -6,6 +6,7 @@ import asyncio
 import base64
 import logging
 import smtplib
+import ssl
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -167,37 +168,43 @@ class EmailService:
         required: bool = False,
         attachments: list[dict] | None = None,
     ) -> None:
+        last_error: AppError | None = None
+
         if self._has_resend():
             try:
                 await self._send_resend(
                     to_email=to_email, subject=subject, html=html, attachments=attachments
                 )
                 return
-            except AppError:
+            except AppError as exc:
+                last_error = exc
                 if self._has_smtp():
                     logger.warning("Resend failed — falling back to SMTP for %s", to_email)
-                    await self._send_smtp(
-                        to_email=to_email, subject=subject, html=html, attachments=attachments
-                    )
-                    return
-                if required:
-                    raise
-                return
 
         if self._has_smtp():
-            await self._send_smtp(
-                to_email=to_email, subject=subject, html=html, attachments=attachments
-            )
+            try:
+                await self._send_smtp(
+                    to_email=to_email, subject=subject, html=html, attachments=attachments
+                )
+                return
+            except AppError as exc:
+                last_error = exc
+
+        if last_error is None:
+            logger.error("Email not sent — no provider configured (to=%s)", to_email)
+            if required:
+                raise AppError(
+                    "Email could not be sent — configure RESEND_API_KEY or SMTP credentials",
+                    code="email_not_configured",
+                    status_code=503,
+                )
             return
 
+        logger.error(
+            "Email not sent to %s subject=%s — every provider failed", to_email, subject
+        )
         if required:
-            raise AppError(
-                "Email could not be sent — configure RESEND_API_KEY or SMTP credentials",
-                code="email_not_configured",
-                status_code=503,
-            )
-
-        logger.error("Email not sent — no provider configured (to=%s)", to_email)
+            raise last_error
 
     async def _send_resend(
         self,
@@ -261,7 +268,7 @@ class EmailService:
             await asyncio.to_thread(
                 self._send_smtp_sync, to_email, subject, html, attachments
             )
-        except smtplib.SMTPException as exc:
+        except (smtplib.SMTPException, OSError, ssl.SSLError) as exc:
             logger.exception("SMTP delivery failed for %s", to_email)
             raise AppError(
                 "Failed to send email. Please try again.",
