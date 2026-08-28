@@ -1,27 +1,26 @@
--- Point every OTP notification type at the one WhatsApp template Meta has
--- actually approved.
+-- Codify the OTP template mapping that production is already running.
 --
 -- 000036 gave each OTP purpose its own template name — `chicaboo_otp_login`,
--- `_signup`, `_verify`, `_reset` — on the reasoning that Meta rejects a single
--- generic "here is a code". None of those four were ever submitted, and 000041
--- section 4 then activated the rows anyway. The WhatsApp Business Account holds
--- exactly one approved template, `chicaboo_otp` (AUTHENTICATION, en, one body
--- variable plus a COPY_CODE button), so every send has resolved to a name that
--- does not exist and come back 132001. That code is in `_PERMANENT_CODES`, so
--- the notification fails outright, `send_otp` supersedes the challenge, and the
--- customer gets a 503 — no OTP has been deliverable, on any purpose, since 41.
+-- `_signup`, `_verify`, `_reset` — and 000041 section 4 activated all of them.
+-- None of the four was ever created in WhatsApp Manager. The live database has
+-- since been corrected out of band: all five OTP types already read
+-- `chicaboo_otp`, verified against the Neon database on 2026-08-28. This
+-- migration is therefore a no-op against production and exists so that a
+-- database provisioned from 000001..000042 lands in the same state instead of
+-- reproducing names that return 132001.
 --
--- 000041 anticipated this exactly: "If a template has NOT actually been
--- approved in WhatsApp Manager, its send fails with a PERMANENT 132001."
+-- `chicaboo_otp` is the only template in the WhatsApp Business Account
+-- (confirmed by enumerating message_templates with paging: exactly one row,
+-- APPROVED, AUTHENTICATION, en). Its body is `*{{1}}* is your verification
+-- code` plus a COPY_CODE button, which matches the `["otp"]` variable_order
+-- these rows already carry — the provider repeats that value into the button
+-- for any template whose category is `authentication`.
 --
--- `variable_order` is left alone: `["otp"]` already matches {{1}} in the
--- approved body, and the provider repeats that value into the copy-code button
--- for every template whose category is `authentication`, which all five rows
--- already are.
---
--- The per-purpose names remain the right end state — Meta reads a login code
--- and a password-reset code as different messages. Restoring them is this
--- statement in reverse, once each name exists and is APPROVED.
+-- The remaining 29 active WhatsApp rows still name templates that do not exist,
+-- so the entire order lifecycle, cart reminders and marketing set fail 132001.
+-- That is a Meta submission job, not a schema change, and is deliberately left
+-- alone here rather than deactivated: an inactive row is indistinguishable from
+-- a type nobody wired up, and these are all wired up and waiting on approval.
 
 UPDATE ops.notification_templates
    SET provider_template_name = 'chicaboo_otp'
