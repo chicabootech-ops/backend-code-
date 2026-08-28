@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.notifications.otp_service import OtpChallenge, OtpError, OtpService
 from app.notifications.service import NotificationService, SendOutcome
+from app.notifications.providers.whatsapp import HEADER_MEDIA_ID, HEADER_MEDIA_TYPE
 from app.notifications.types import NotificationType
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,13 @@ OTP_PURPOSES: dict[str, NotificationType] = {
     "PHONE_VERIFICATION": NotificationType.OTP_PHONE_VERIFY,
     "PASSWORD_RESET": NotificationType.OTP_PASSWORD_RESET,
     "CHANGE_PHONE": NotificationType.OTP_CHANGE_PHONE,
+}
+
+
+#: Media kind to the template that declares that header format.
+_BROADCAST_TYPES: dict[str, NotificationType] = {
+    "image": NotificationType.MARKETING_BROADCAST_IMAGE,
+    "video": NotificationType.MARKETING_BROADCAST_VIDEO,
 }
 
 
@@ -208,6 +216,45 @@ class WhatsAppService:
             reference_id=reference_id,
             campaign_id=campaign_id,
             deliver_now=deliver_now,
+        )
+
+    async def send_broadcast(
+        self,
+        *,
+        recipient: str,
+        customer_name: str,
+        message: str,
+        media_id: str | None = None,
+        media_kind: str = "image",
+        user_id: uuid.UUID | None = None,
+        campaign_id: uuid.UUID | None = None,
+    ) -> SendOutcome:
+        """Admin-composed marketing message, optionally carrying an image or video.
+
+        The header format is fixed per template at approval time, so the media
+        choice selects the notification type rather than being a flag on one.
+        Attaching nothing sends the text variant — a media template with no id
+        is rejected by Meta.
+        """
+        kind = media_kind.lower()
+        if media_id and kind not in _BROADCAST_TYPES:
+            raise ValueError(f"media_kind must be one of: {', '.join(_BROADCAST_TYPES)}")
+
+        notification_type = (
+            _BROADCAST_TYPES[kind] if media_id else NotificationType.MARKETING_BROADCAST
+        )
+        variables: dict[str, Any] = {"customer_name": customer_name, "message": message}
+        if media_id:
+            variables[HEADER_MEDIA_ID] = media_id
+            variables[HEADER_MEDIA_TYPE] = kind
+
+        return await self._notifications.send(
+            notification_type,
+            recipient=recipient,
+            variables=variables,
+            idempotency_key=None,
+            user_id=user_id,
+            campaign_id=campaign_id,
         )
 
     async def send_text_message(self, *, recipient: str, body: str) -> SendOutcome:

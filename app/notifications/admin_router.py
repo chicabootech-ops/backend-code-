@@ -18,7 +18,16 @@ import logging
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -26,7 +35,9 @@ from app.admin_api.core.security.permissions import Permission, require
 from app.admin_api.dependencies import CurrentAdmin
 from app.config import settings
 from app.notifications.analytics_service import AnalyticsService
+from app.notifications.providers.whatsapp import WhatsAppMediaError, WhatsAppProvider
 from app.notifications.service import NotificationService
+from app.notifications.whatsapp_service import WhatsAppService
 from app.storefront.dependencies import DbSession
 
 logger = logging.getLogger(__name__)
@@ -332,6 +343,112 @@ async def resend_message(
 # ====================================================================== #
 # Analytics
 # ====================================================================== #
+#: Meta's ceilings for template header media. Enforced here so an oversized file
+#: fails on our side with a readable message rather than as a Graph API error
+#: after the upload has already been paid for.
+_MEDIA_LIMITS: dict[str, tuple[int, frozenset[str]]] = {
+    "image": (5 * 1024 * 1024, frozenset({"image/jpeg", "image/png"})),
+    "video": (16 * 1024 * 1024, frozenset({"video/mp4", "video/3gpp"})),
+}
+
+
+class MediaUploadOut(BaseModel):
+    media_id: str
+    media_kind: str
+    filename: str
+    size_bytes: int
+
+
+class BroadcastRequest(BaseModel):
+    recipient: str = Field(..., min_length=6, max_length=20)
+    customer_name: str = Field(..., min_length=1, max_length=120)
+    message: str = Field(..., min_length=1, max_length=900)
+    media_id: str | None = None
+    media_kind: str = Field(default="image", pattern="^(image|video)$")
+
+
+@router.post("/media", response_model=MediaUploadOut, dependencies=[RequireMarketing])
+async def upload_broadcast_media(
+    admin: CurrentAdmin,
+    file: UploadFile = File(...),
+    media_kind: str = Form("image"),
+) -> MediaUploadOut:
+    """Push an image or video to Meta and return the id a broadcast references.
+
+    Meta hosts it, so nothing has to be publicly reachable on our side — which
+    matters because `R2_PUBLIC_BASE_URL` is unset and R2 objects are not
+    addressable without a presigned URL. Ids expire after 30 days; a campaign
+    that sits in draft longer than that needs the file attached again.
+    """
+    kind = media_kind.lower()
+    if kind not in _MEDIA_LIMITS:
+        raise HTTPException(status_code=400, detail="media_kind must be image or video")
+
+    max_bytes, allowed = _MEDIA_LIMITS[kind]
+    content_type = (file.content_type or "").lower()
+    if content_type not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{kind} must be one of: {', '.join(sorted(allowed))}",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{kind} exceeds Meta's limit of {max_bytes // (1024 * 1024)}MB",
+        )
+
+    try:
+        media_id = await WhatsAppProvider(settings).upload_media(
+            content=content,
+            filename=file.filename or f"broadcast.{kind}",
+            content_type=content_type,
+        )
+    except WhatsAppMediaError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return MediaUploadOut(
+        media_id=media_id,
+        media_kind=kind,
+        filename=file.filename or "",
+        size_bytes=len(content),
+    )
+
+
+@router.post("/broadcast", dependencies=[RequireMarketing])
+async def send_broadcast(
+    body: BroadcastRequest,
+    request: Request,
+    db: DbSession,
+    admin: CurrentAdmin,
+) -> dict[str, Any]:
+    """Send one composed broadcast, with or without a media header."""
+    build = getattr(request.app.state, "build_notifications", None)
+    if build is None:
+        raise HTTPException(status_code=503, detail="Messaging is not configured")
+
+    service = WhatsAppService(db, settings, notifications=build(db))
+    try:
+        outcome = await service.send_broadcast(
+            recipient=body.recipient,
+            customer_name=body.customer_name,
+            message=body.message,
+            media_id=body.media_id,
+            media_kind=body.media_kind,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "notification_id": str(outcome.notification_id) if outcome.notification_id else None,
+        "status": str(outcome.status) if outcome.status else None,
+        "failed": outcome.failed,
+    }
+
+
 @router.get("/analytics/overview")
 async def analytics_overview(
     admin: CurrentAdmin,

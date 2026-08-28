@@ -35,8 +35,20 @@ from app.notifications.types import (
 
 logger = logging.getLogger(__name__)
 
+
+class WhatsAppMediaError(Exception):
+    """A media upload to Meta did not produce a usable id."""
+
 #: Meta's template category for OTP templates. Distinct from our Category enum.
 TEMPLATE_CATEGORY_AUTHENTICATION = "authentication"
+
+#: Reserved `variables` keys carrying header media, following the existing
+#: underscore convention. They travel in `variables` rather than on
+#: `OutboundMessage` so a campaign's stored JSONB reaches the provider unchanged.
+HEADER_MEDIA_ID = "_header_media_id"
+HEADER_MEDIA_TYPE = "_header_media_type"
+
+_HEADER_MEDIA_TYPES = {"image", "video", "document"}
 
 _TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0)
 _LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=10)
@@ -164,10 +176,68 @@ class WhatsAppProvider(NotificationProvider):
 
         return self._interpret(response, message)
 
+    async def upload_media(
+        self, *, content: bytes, filename: str, content_type: str
+    ) -> str:
+        """Upload a file to Meta and return its media id.
+
+        Meta hosts the asset, so a template header can reference it by id and
+        nothing has to be publicly reachable on our side. Ids are scoped to the
+        phone number that uploaded them and expire after 30 days, which is why
+        callers store the id alongside the campaign rather than treating it as
+        permanent.
+        """
+        if not self.configured:
+            raise WhatsAppMediaError("WhatsApp is not configured")
+
+        url = (
+            f"https://graph.facebook.com/{self._settings.whatsapp_api_version}"
+            f"/{self._settings.whatsapp_phone_number_id}/media"
+        )
+        client = await self._get_client()
+        try:
+            response = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {self._settings.whatsapp_access_token}"},
+                data={"messaging_product": "whatsapp", "type": content_type},
+                files={"file": (filename, content, content_type)},
+            )
+        except httpx.HTTPError as exc:
+            raise WhatsAppMediaError(f"Upload failed: {type(exc).__name__}") from exc
+
+        body = {}
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001
+            pass
+        if response.status_code >= 400 or not body.get("id"):
+            error = body.get("error", {})
+            raise WhatsAppMediaError(
+                error.get("message") or f"Upload rejected ({response.status_code})"
+            )
+        logger.info("whatsapp_media_uploaded id=%s type=%s", body["id"], content_type)
+        return str(body["id"])
+
     def _build_payload(self, message: OutboundMessage) -> dict[str, Any]:
         template = message.template
         assert template is not None
         components: list[dict[str, Any]] = []
+
+        media_id = message.variables.get(HEADER_MEDIA_ID)
+        if media_id:
+            media_type = str(
+                message.variables.get(HEADER_MEDIA_TYPE) or "image"
+            ).lower()
+            if media_type not in _HEADER_MEDIA_TYPES:
+                media_type = "image"
+            components.append(
+                {
+                    "type": "header",
+                    "parameters": [
+                        {"type": media_type, media_type: {"id": str(media_id)}}
+                    ],
+                }
+            )
 
         body_params = [
             {"type": "text", "text": str(message.variables.get(name, ""))}
