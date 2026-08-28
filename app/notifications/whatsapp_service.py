@@ -364,6 +364,9 @@ class WhatsAppService:
                 "order_number": order_number,
                 "tracking_number": tracking_number,
                 "courier": courier,
+                "tracking_url": (
+                    f"{self._settings.effective_frontend_url}/track-order?order={order_number}"
+                ),
             },
             idempotency_key=f"order:{order_id}:ORDER_SHIPPED",
             user_id=user_id,
