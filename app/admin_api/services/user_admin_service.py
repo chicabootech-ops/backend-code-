@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.admin_api.core.exceptions import NotFoundError
 from app.admin_api.integrations.r2_client import R2Client
+from app.admin_api.lib.user_excel_export import build_user_workbook
 from app.admin_api.models.commerce import (
     CustomerUser,
     Order,
@@ -24,6 +26,7 @@ from app.admin_api.schemas.user import (
     AdminUserOrderOut,
     AdminUserOut,
     UserListResponse,
+    UserStats,
     UserStatusUpdate,
 )
 
@@ -161,6 +164,31 @@ class UserAdminService:
                 "total_pages": max(1, (total + page_size - 1) // page_size),
             },
         )
+
+    async def stats(self) -> UserStats:
+        return UserStats(**await self._repo.stats())
+
+    async def export_excel(
+        self,
+        *,
+        search: str | None = None,
+        status: str | None = None,
+    ) -> tuple[bytes, str]:
+        customers = await self._repo.fetch_export_rows(search=search, status=status)
+        user_ids = [row["user_id"] for row in customers]
+        addresses = await self._repo.fetch_export_addresses(user_ids=user_ids)
+        stats = await self._repo.stats()
+        exported_at = datetime.now(UTC)
+        payload = build_user_workbook(
+            customers=customers,
+            addresses=addresses,
+            stats=stats,
+            filters={"search": search, "status": status},
+            exported_at=exported_at,
+        )
+        stamp = exported_at.strftime("%Y%m%d")
+        filename = f"chicaboo-customers-{stamp}.xlsx"
+        return payload, filename
 
     async def get_user(self, user_id: uuid.UUID) -> AdminUserDetailOut:
         row = await self._repo.get_user_detail(user_id)

@@ -105,3 +105,13 @@ class AdminUserDetailOut(BaseModel):
 class UserListResponse(BaseModel):
     items: list[AdminUserOut]
     meta: dict
+
+
+class UserStats(BaseModel):
+    total: int
+    active: int
+    suspended: int
+    blocked: int
+    pending_verification: int
+    new_30d: int
+    with_orders: int

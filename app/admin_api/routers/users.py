@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 
 from app.admin_api.core.security.permissions import UserWriter
 from app.admin_api.dependencies import CurrentAdmin, UserAdminServiceDep
-from app.admin_api.schemas.user import AdminUserDetailOut, AdminUserOut, UserListResponse, UserStatusUpdate
+from app.admin_api.schemas.user import AdminUserDetailOut, AdminUserOut, UserListResponse, UserStats, UserStatusUpdate
 
 router = APIRouter(prefix="/admin/users", tags=["admin-users"])
 
@@ -28,6 +28,26 @@ async def list_users(
     status: str | None = None,
 ):
     return await service.list_users(page=page, page_size=page_size, search=search, status=status)
+
+
+@router.get("/stats", response_model=UserStats)
+async def user_stats(_admin: CurrentAdmin, service: UserAdminServiceDep):
+    return await service.stats()
+
+
+@router.get("/export")
+async def export_users(
+    _admin: CurrentAdmin,
+    service: UserAdminServiceDep,
+    search: str | None = None,
+    status: str | None = None,
+):
+    payload, filename = await service.export_excel(search=search, status=status)
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{user_id}", response_model=AdminUserDetailOut)
