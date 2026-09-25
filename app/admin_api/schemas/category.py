@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
+
+from app.storefront.lib.media import normalize_storage_key
 
 
 class CategoryCreate(BaseModel):
@@ -13,7 +15,7 @@ class CategoryCreate(BaseModel):
     parent_id: UUID | None = None
     kind: Literal["section", "category"] | None = None
     description: str | None = None
-    image_r2_key: str | None = None
+    image_r2_key: Annotated[str | None, AfterValidator(normalize_storage_key)] = None
     sort_order: int = 0
     status: str = "active"
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -24,7 +26,7 @@ class CategoryUpdate(BaseModel):
     slug: str | None = None
     parent_id: UUID | None = None
     description: str | None = None
-    image_r2_key: str | None = None
+    image_r2_key: Annotated[str | None, AfterValidator(normalize_storage_key)] = None
     sort_order: int | None = None
     status: str | None = None
     metadata: dict[str, Any] | None = None

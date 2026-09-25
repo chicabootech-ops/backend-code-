@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import boto3
-from botocore.client import Config
-from botocore.exceptions import ClientError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.storefront.lib.media import resolve_storage_url
 from app.storefront.models.category import Category
 from app.storefront.repositories.category_repository import CategoryRepository
 from app.storefront.schemas.category import (
@@ -15,49 +12,9 @@ from app.storefront.schemas.category import (
     StorefrontCategoryParentOut,
 )
 
-DEFAULT_COLLECTION_IMAGE = "/collections/tulips.jpeg"
-LEGACY_PLACEHOLDER_IMAGE = "/collections/premium-blooms.jpg"
-
-
-def _image_url(image_r2_key: str | None) -> str | None:
-    if not image_r2_key:
-        return None
-    key = image_r2_key.strip()
-    if not key:
-        return None
-    if key.startswith("/"):
-        return key
-    if settings.r2_public_base_url:
-        return f"{settings.r2_public_base_url.rstrip('/')}/{key.lstrip('/')}"
-    if not (
-        settings.r2_endpoint_url
-        and settings.r2_access_key
-        and settings.r2_secret_key
-        and settings.r2_bucket
-    ):
-        return None
-    try:
-        client = boto3.client(
-            "s3",
-            endpoint_url=settings.r2_endpoint_url,
-            aws_access_key_id=settings.r2_access_key,
-            aws_secret_access_key=settings.r2_secret_key,
-            region_name="auto",
-            config=Config(signature_version="s3v4"),
-        )
-        return client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": settings.r2_bucket, "Key": image_r2_key},
-            ExpiresIn=3600,
-        )
-    except ClientError:
-        return None
-
 
 def _to_out(category: Category) -> StorefrontCategoryOut:
-    resolved = _image_url(category.image_r2_key)
-    if resolved == LEGACY_PLACEHOLDER_IMAGE:
-        resolved = None
+    resolved = resolve_storage_url(category.image_r2_key)
     return StorefrontCategoryOut(
         id=category.id,
         name=category.name,

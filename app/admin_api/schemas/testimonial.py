@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
+
+from app.storefront.lib.media import normalize_storage_key
 
 
 class TestimonialCreate(BaseModel):
     author_name: str = Field(min_length=1, max_length=120)
     author_role: str | None = Field(default=None, max_length=160)
-    avatar_r2_key: str | None = None
+    avatar_r2_key: Annotated[str | None, AfterValidator(normalize_storage_key)] = None
     quote: str = Field(min_length=1, max_length=2000)
     rating: int | None = Field(default=5, ge=1, le=5)
     product_id: UUID | None = None
@@ -22,7 +24,7 @@ class TestimonialCreate(BaseModel):
 class TestimonialUpdate(BaseModel):
     author_name: str | None = Field(default=None, min_length=1, max_length=120)
     author_role: str | None = Field(default=None, max_length=160)
-    avatar_r2_key: str | None = None
+    avatar_r2_key: Annotated[str | None, AfterValidator(normalize_storage_key)] = None
     quote: str | None = Field(default=None, min_length=1, max_length=2000)
     rating: int | None = Field(default=None, ge=1, le=5)
     product_id: UUID | None = None

@@ -48,6 +48,11 @@ Migrations live in [`database/`](database/). Apply with:
 cd database && python migrate.py migrate
 ```
 
+The image-key migration (`000045`) also requires the existing R2 configuration in the
+environment: `R2_ENDPOINT_URL` (or `R2_ACCOUNT_ID`) and `R2_BUCKET_NAME` (or `R2_BUCKET`).
+If a custom image domain was used, include `R2_PUBLIC_BASE_URL`. Unrecognized R2 or
+presigned URLs abort the migration without committing changes.
+
 ## Layout
 
 ```

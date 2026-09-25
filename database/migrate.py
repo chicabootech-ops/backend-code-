@@ -49,6 +49,16 @@ def apply_migration(conn, path: Path) -> None:
     version = path.stem
     print(f"Applying {version} ...")
     with conn.cursor() as cur:
+        endpoint = os.environ.get("R2_ENDPOINT_URL") or (
+            f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com"
+            if os.environ.get("R2_ACCOUNT_ID") else ""
+        )
+        for name, value in {
+            "r2_endpoint": endpoint,
+            "r2_bucket": os.environ.get("R2_BUCKET_NAME") or os.environ.get("R2_BUCKET", ""),
+            "r2_public_base": os.environ.get("R2_PUBLIC_BASE_URL", ""),
+        }.items():
+            cur.execute("SELECT set_config(%s, %s, true)", (f"chicaboo.{name}", value))
         cur.execute(sql_text)
         cur.execute(
             "INSERT INTO public.schema_migrations (version) VALUES (%s);",

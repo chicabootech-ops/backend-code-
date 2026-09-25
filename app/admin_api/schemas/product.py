@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
+
+from app.storefront.lib.media import normalize_image_metadata, normalize_storage_key
 
 
 class ProductVariantIn(BaseModel):
@@ -25,9 +27,9 @@ class ProductCreate(BaseModel):
     brand: str | None = None
     status: str = "draft"
     is_featured: bool = False
-    image_url: str | None = None
-    gallery: list[str] | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    image_url: Annotated[str | None, AfterValidator(normalize_storage_key)] = None
+    gallery: list[Annotated[str, AfterValidator(normalize_storage_key)]] | None = None
+    metadata: Annotated[dict[str, Any], AfterValidator(normalize_image_metadata)] = Field(default_factory=dict)
     variant: ProductVariantIn | None = None
 
 
@@ -40,9 +42,9 @@ class ProductUpdate(BaseModel):
     brand: str | None = None
     status: str | None = None
     is_featured: bool | None = None
-    image_url: str | None = None
-    gallery: list[str] | None = None
-    metadata: dict[str, Any] | None = None
+    image_url: Annotated[str | None, AfterValidator(normalize_storage_key)] = None
+    gallery: list[Annotated[str, AfterValidator(normalize_storage_key)]] | None = None
+    metadata: Annotated[dict[str, Any], AfterValidator(normalize_image_metadata)] | None = None
     variant: ProductVariantIn | None = None
 
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
+
+from app.storefront.lib.media import normalize_storage_key
 
 OptionKind = Literal["flower", "color", "wrap"]
 
@@ -18,7 +20,7 @@ class BouquetOptionCreate(BaseModel):
     slug: str | None = Field(default=None, max_length=80)
     description: str | None = Field(default=None, max_length=300)
     hex_code: str | None = Field(default=None, pattern=HEX_PATTERN)
-    image_r2_key: str | None = None
+    image_r2_key: Annotated[str | None, AfterValidator(normalize_storage_key)] = None
     price_delta_paise: int = Field(default=0, ge=0)
     status: Literal["active", "inactive"] = "active"
     sort_order: int = Field(default=0, ge=0)
@@ -28,7 +30,7 @@ class BouquetOptionUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)
     description: str | None = Field(default=None, max_length=300)
     hex_code: str | None = Field(default=None, pattern=HEX_PATTERN)
-    image_r2_key: str | None = None
+    image_r2_key: Annotated[str | None, AfterValidator(normalize_storage_key)] = None
     price_delta_paise: int | None = Field(default=None, ge=0)
     status: Literal["active", "inactive"] | None = None
     sort_order: int | None = Field(default=None, ge=0)
